@@ -542,7 +542,7 @@ for the cross-account bucket caveat and the permissions the plan role needs.
 
 ### Instance profile requirement
 
-All EC2 instances should have an instance profile. The `EC2-Default-SSM-Role` comes with an instance profile of the same name (the iam module names a profile after its role). The iam stack creates both in the management account only: its `deployment_targets` (Security, Infrastructure, Workloads) are not deployed by any stack, so a member account has the role only when you create it there by other means (see [IAM module, Deployment Targets](../modules/iam/README.md#deployment-targets)). The role provides:
+All EC2 instances should have an instance profile. The `EC2-Default-SSM-Role` comes with an instance profile of the same name (the iam module names a profile after its role). The iam stack creates both in the management account; `stacks/management/member-roles` (toggle `enable_member_roles`) creates them, with `SSM-S3-Policy` and `End-User-Policy`, in every active account of the OUs its `deployment_targets` name (Security, Infrastructure, Workloads; see [member-roles module](../modules/member-roles/README.md)). The role provides:
 
 - SSM Managed Instance Core (Session Manager, Run Command, Patch Manager)
 - CloudWatch Agent

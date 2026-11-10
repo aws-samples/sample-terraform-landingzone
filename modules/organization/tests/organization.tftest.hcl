@@ -25,8 +25,8 @@ mock_provider "aws" {
   }
 
   # The region where Organizations events reach EventBridge: runs that enable
-  # SCP change detection stay clear of the check scp_revert_detection_region,
-  # which regression_scp_revert_detection_outside_us_east_1_warns proves.
+  # SCP change detection plan every key in one region unless a run overrides
+  # it (regression_scp_revert_detection_runs_in_us_east_1).
   override_data {
     target = data.aws_region.current
     values = {
@@ -147,13 +147,11 @@ run "all_toggles_off_no_resources" {
       length(aws_sns_topic_policy.quarantine_detach) == 0,
       length(aws_cloudwatch_event_rule.quarantine_detach) == 0,
       length(aws_cloudwatch_event_target.quarantine_detach) == 0,
-      length(aws_lambda_function.quarantine_auto_detach) == 0,
-      length(aws_iam_role.quarantine_auto_detach_lambda) == 0,
-      length(aws_lambda_permission.quarantine_auto_detach) == 0,
-      length(aws_sqs_queue.quarantine_auto_detach_dlq) == 0,
       length(aws_sqs_queue.scp_auto_revert_dlq) == 0,
+      length(aws_kms_key.sns_topics) == 0,
+      length(aws_kms_key.cloudwatch_logs) == 0,
     ])
-    error_message = "No quarantine auto-detach resources must be created when the toggle is false."
+    error_message = "No quarantine notification resources and no module key must be created when the toggles are false."
   }
 
   # SCP revert detection
@@ -242,11 +240,6 @@ run "all_toggles_off_no_resources" {
   assert {
     condition     = output.scp_auto_revert_lambda_arn == null
     error_message = "scp_auto_revert_lambda_arn must be null when auto-revert is disabled."
-  }
-
-  assert {
-    condition     = output.quarantine_auto_detach_lambda_arn == null
-    error_message = "quarantine_auto_detach_lambda_arn must be null when auto-detach is disabled."
   }
 
   assert {
@@ -626,51 +619,20 @@ run "custom_configuration" {
     error_message = "The SNS target of the quarantine detach rule must be created."
   }
 
-  assert {
-    condition     = length(aws_lambda_function.quarantine_auto_detach) == 1
-    error_message = "The quarantine auto-detach Lambda must be created."
-  }
-
-  assert {
-    condition     = aws_lambda_function.quarantine_auto_detach[0].runtime == "python3.12"
-    error_message = "The quarantine auto-detach Lambda must use the python3.12 runtime."
-  }
-
-  # The asynchronously invoked guard Lambdas must keep their dead-letter queue and
+  # The asynchronously invoked guard Lambda must keep its dead-letter queue and
   # concurrency cap — without the DLQ a failed invocation vanishes silently.
   assert {
     condition = alltrue([
-      length(aws_sqs_queue.quarantine_auto_detach_dlq) == 1,
-      length(aws_lambda_function.quarantine_auto_detach[0].dead_letter_config) == 1,
       length(aws_sqs_queue.scp_auto_revert_dlq) == 1,
       length(aws_lambda_function.scp_auto_revert[0].dead_letter_config) == 1,
-    ])
-    error_message = "Both guard Lambdas must carry a dead-letter queue (SQS) so failed asynchronous invocations stay observable."
-  }
-
-  assert {
-    condition = alltrue([
-      aws_sqs_queue.quarantine_auto_detach_dlq[0].sqs_managed_sse_enabled == true,
       aws_sqs_queue.scp_auto_revert_dlq[0].sqs_managed_sse_enabled == true,
-    ])
-    error_message = "Both dead-letter queues must be encrypted at rest (SSE-SQS)."
-  }
-
-  assert {
-    condition = alltrue([
-      aws_lambda_function.quarantine_auto_detach[0].reserved_concurrent_executions == 10,
       aws_lambda_function.scp_auto_revert[0].reserved_concurrent_executions == 10,
     ])
-    error_message = "Both guard Lambdas must cap their concurrency (reserved_concurrent_executions)."
+    error_message = "The SCP auto-revert Lambda must carry an encrypted dead-letter queue (SSE-SQS) and cap its concurrency."
   }
 
   assert {
-    condition     = length(aws_cloudwatch_event_target.quarantine_auto_detach_lambda) == 1
-    error_message = "The Lambda target of the quarantine detach rule must be created."
-  }
-
-  assert {
-    condition     = aws_lambda_permission.quarantine_auto_detach[0].principal == "events.amazonaws.com"
+    condition     = aws_lambda_permission.scp_auto_revert[0].principal == "events.amazonaws.com"
     error_message = "The Lambda invoke permission must use the partition DNS suffix."
   }
 
@@ -714,6 +676,11 @@ run "custom_configuration" {
   assert {
     condition     = length(aws_cloudwatch_event_rule.account_move) == 1
     error_message = "The account move EventBridge rule must be created."
+  }
+
+  assert {
+    condition     = keys(aws_kms_key.cloudwatch_logs) == ["stack"]
+    error_message = "A us-east-1 stack must keep its logs key at the address \"stack\"."
   }
 
   # Opt-in regions and delegated administrators
@@ -1754,11 +1721,6 @@ run "dormant_upsert_names_default_to_the_literals" {
   }
 
   assert {
-    condition     = aws_sqs_queue.quarantine_auto_detach_dlq[0].name == "tlz-quarantine-auto-detach-dlq"
-    error_message = "quarantine_auto_detach_dlq_name must default to tlz-quarantine-auto-detach-dlq so a production plan stays empty."
-  }
-
-  assert {
     condition     = aws_sqs_queue.scp_auto_revert_dlq[0].name == "tlz-scp-auto-revert-dlq"
     error_message = "scp_auto_revert_dlq_name must default to tlz-scp-auto-revert-dlq so a production plan stays empty."
   }
@@ -1768,12 +1730,7 @@ run "dormant_upsert_names_default_to_the_literals" {
     error_message = "account_move_rule_name must default to tlz-account-move so a production plan stays empty."
   }
 
-  # The two Lambda policies grant sqs:SendMessage on the default queue names.
-  assert {
-    condition     = strcontains(aws_iam_role_policy.quarantine_auto_detach_lambda[0].policy, ":sqs:*:*:tlz-quarantine-auto-detach-dlq")
-    error_message = "The quarantine auto-detach policy's DLQ grant must name the default queue."
-  }
-
+  # The Lambda policy grants sqs:SendMessage on the default queue name.
   assert {
     condition     = strcontains(aws_iam_role_policy.scp_auto_revert_lambda[0].policy, ":sqs:*:*:tlz-scp-auto-revert-dlq")
     error_message = "The SCP auto-revert policy's DLQ grant must name the default queue."
@@ -1789,17 +1746,16 @@ run "dormant_upsert_names_reach_their_resources" {
   command = plan
 
   variables {
-    enable_quarantine_scp           = true
-    enable_quarantine_auto_detach   = true
-    enable_scp_revert_detection     = true
-    enable_scp_auto_revert          = true
-    enable_account_move_automation  = true
-    scp_revert_notification_emails  = ["ops@example.com"]
-    quarantine_detach_topic_name    = "tlz-l4test-quarantine-scp-detach-notification"
-    quarantine_detach_rule_name     = "tlz-l4test-quarantine-scp-pipeline-completion"
-    quarantine_auto_detach_dlq_name = "tlz-l4test-quarantine-auto-detach-dlq"
-    scp_auto_revert_dlq_name        = "tlz-l4test-scp-auto-revert-dlq"
-    account_move_rule_name          = "tlz-l4test-account-move"
+    enable_quarantine_scp          = true
+    enable_quarantine_auto_detach  = true
+    enable_scp_revert_detection    = true
+    enable_scp_auto_revert         = true
+    enable_account_move_automation = true
+    scp_revert_notification_emails = ["ops@example.com"]
+    quarantine_detach_topic_name   = "tlz-l4test-quarantine-scp-detach-notification"
+    quarantine_detach_rule_name    = "tlz-l4test-quarantine-scp-pipeline-completion"
+    scp_auto_revert_dlq_name       = "tlz-l4test-scp-auto-revert-dlq"
+    account_move_rule_name         = "tlz-l4test-account-move"
   }
 
   assert {
@@ -1813,26 +1769,8 @@ run "dormant_upsert_names_reach_their_resources" {
   }
 
   assert {
-    condition = alltrue([
-      aws_cloudwatch_event_target.quarantine_detach[0].rule == "tlz-l4test-quarantine-scp-pipeline-completion",
-      aws_cloudwatch_event_target.quarantine_auto_detach_lambda[0].rule == "tlz-l4test-quarantine-scp-pipeline-completion",
-    ])
-    error_message = "Both targets (SNS and Lambda) of the quarantine detach rule must follow the renamed rule."
-  }
-
-  assert {
-    condition     = aws_sqs_queue.quarantine_auto_detach_dlq[0].name == "tlz-l4test-quarantine-auto-detach-dlq"
-    error_message = "quarantine_auto_detach_dlq_name must reach the quarantine auto-detach DLQ."
-  }
-
-  assert {
-    condition     = strcontains(aws_iam_role_policy.quarantine_auto_detach_lambda[0].policy, ":sqs:*:*:tlz-l4test-quarantine-auto-detach-dlq")
-    error_message = "The quarantine auto-detach policy's sqs:SendMessage grant must follow the renamed DLQ."
-  }
-
-  assert {
-    condition     = !strcontains(aws_iam_role_policy.quarantine_auto_detach_lambda[0].policy, "tlz-quarantine-auto-detach-dlq\"")
-    error_message = "The quarantine auto-detach policy must not keep granting on the default DLQ name once the queue is renamed."
+    condition     = aws_cloudwatch_event_target.quarantine_detach[0].rule == "tlz-l4test-quarantine-scp-pipeline-completion"
+    error_message = "The SNS target of the quarantine detach rule must follow the renamed rule."
   }
 
   assert {
@@ -1899,28 +1837,21 @@ run "account_move_rule_name_outside_namespace_rejected" {
   expect_failures = [var.account_move_rule_name]
 }
 
-# Rejection: the two queue names are deliberately NOT pinned to tlz- (no
-# guardrail names an SQS queue ARN), so a name outside the namespace passes —
-# and only the SQS naming rule refuses: a dot would turn a standard queue into
-# an accidental .fifo name, 81 characters exceed the limit.
+# Rejection: the queue name is deliberately NOT pinned to tlz- (no guardrail
+# names an SQS queue ARN), so a name outside the namespace passes — and only
+# the SQS naming rule refuses: 81 characters exceed the limit.
 run "dlq_names_outside_namespace_accepted_but_aws_naming_rule_enforced" {
   command = plan
 
   variables {
-    enable_quarantine_scp           = true
-    enable_quarantine_auto_detach   = true
-    enable_scp_revert_detection     = true
-    enable_scp_auto_revert          = true
-    quarantine_auto_detach_dlq_name = "team-quarantine-auto-detach-dlq"
-    scp_auto_revert_dlq_name        = "team-scp-auto-revert-dlq"
+    enable_scp_revert_detection = true
+    enable_scp_auto_revert      = true
+    scp_auto_revert_dlq_name    = "team-scp-auto-revert-dlq"
   }
 
   assert {
-    condition = alltrue([
-      aws_sqs_queue.quarantine_auto_detach_dlq[0].name == "team-quarantine-auto-detach-dlq",
-      aws_sqs_queue.scp_auto_revert_dlq[0].name == "team-scp-auto-revert-dlq",
-    ])
-    error_message = "The DLQ names are not confined to tlz- (no guardrail covers SQS), so a name outside the namespace must be accepted."
+    condition     = aws_sqs_queue.scp_auto_revert_dlq[0].name == "team-scp-auto-revert-dlq"
+    error_message = "The DLQ name is not confined to tlz- (no guardrail covers SQS), so a name outside the namespace must be accepted."
   }
 }
 
@@ -1928,15 +1859,12 @@ run "dlq_names_breaking_the_sqs_naming_rule_rejected" {
   command = plan
 
   variables {
-    enable_quarantine_scp           = true
-    enable_quarantine_auto_detach   = true
-    enable_scp_revert_detection     = true
-    enable_scp_auto_revert          = true
-    quarantine_auto_detach_dlq_name = "tlz-quarantine-auto-detach-dlq.fifo"
-    scp_auto_revert_dlq_name        = join("", [for i in range(81) : "x"])
+    enable_scp_revert_detection = true
+    enable_scp_auto_revert      = true
+    scp_auto_revert_dlq_name    = join("", [for i in range(81) : "x"])
   }
 
-  expect_failures = [var.quarantine_auto_detach_dlq_name, var.scp_auto_revert_dlq_name]
+  expect_failures = [var.scp_auto_revert_dlq_name]
 }
 
 # -----------------------------------------------------------------------------
@@ -2069,8 +1997,15 @@ run "regression_eventbridge_topics_use_the_sns_key" {
     error_message = "Both EventBridge-fed topics must use the module's SNS key, not alias/aws/sns (EventBridge cannot publish to the AWS managed key)."
   }
 
+  # regression: the key in the stack's region keeps the instance key "stack",
+  # the target of the moved block from the single-key address [0].
   assert {
-    condition = jsondecode(aws_kms_key.sns_topics[0].policy).Statement == [
+    condition     = keys(aws_kms_key.sns_topics) == ["stack"]
+    error_message = "From a stack in us-east-1 both topics must share the key addressed \"stack\", so a deployed key keeps its identity."
+  }
+
+  assert {
+    condition = jsondecode(aws_kms_key.sns_topics["stack"].policy).Statement == [
       {
         Sid       = "EnableRootAccountAccess"
         Effect    = "Allow"
@@ -2134,9 +2069,13 @@ run "regression_quarantine_detach_pipeline_names_empty_rejected" {
   expect_failures = [var.quarantine_detach_pipeline_names]
 }
 
-# Organizations events reach EventBridge in us-east-1 only: detection in
-# another region of the aws partition warns; us-east-1 does not.
-run "regression_scp_revert_detection_outside_us_east_1_warns" {
+# regression: Organizations events reach EventBridge in us-east-1 only, and
+# the detection used to sit in the stack's region, where it received nothing
+# (the shipped example runs in eu-central-1). From a stack in eu-central-1
+# every regional resource of the detection and of the auto-revert function
+# names us-east-1, with a key of its own there; the quarantine notification
+# stays in the stack's region with its own.
+run "regression_scp_revert_detection_runs_in_us_east_1" {
   command = plan
 
   override_data {
@@ -2147,28 +2086,123 @@ run "regression_scp_revert_detection_outside_us_east_1_warns" {
   }
 
   variables {
-    enable_scp_revert_detection = true
+    enable_scp_revert_detection    = true
+    enable_scp_auto_revert         = true
+    scp_revert_notification_emails = ["ops@example.com"]
+    enable_quarantine_scp          = true
+    enable_quarantine_auto_detach  = true
+    enable_account_move_automation = true
   }
 
-  expect_failures = [check.scp_revert_detection_region]
+  assert {
+    condition = alltrue([
+      aws_sns_topic.scp_revert[0].region == "us-east-1",
+      aws_sns_topic_policy.scp_revert[0].region == "us-east-1",
+      aws_sns_topic_subscription.scp_revert["ops@example.com"].region == "us-east-1",
+      aws_cloudwatch_event_rule.scp_revert[0].region == "us-east-1",
+      aws_cloudwatch_event_target.scp_revert[0].region == "us-east-1",
+      aws_cloudwatch_event_target.scp_auto_revert_lambda[0].region == "us-east-1",
+      aws_lambda_function.scp_auto_revert[0].region == "us-east-1",
+      aws_lambda_permission.scp_auto_revert[0].region == "us-east-1",
+      aws_sqs_queue.scp_auto_revert_dlq[0].region == "us-east-1",
+      aws_cloudwatch_log_group.scp_auto_revert[0].region == "us-east-1",
+    ])
+    error_message = "Every regional resource of the SCP change detection and auto-revert must be created in us-east-1, where Organizations delivers its events."
+  }
+
+  assert {
+    condition = (
+      keys(aws_kms_key.sns_topics) == ["stack", "us-east-1"] &&
+      keys(aws_kms_key.cloudwatch_logs) == ["us-east-1"] &&
+      aws_kms_key.sns_topics["us-east-1"].region == "us-east-1" &&
+      aws_kms_key.cloudwatch_logs["us-east-1"].region == "us-east-1" &&
+      strcontains(aws_kms_key.cloudwatch_logs["us-east-1"].policy, "logs.us-east-1.amazonaws.com")
+    )
+    error_message = "Each region with an encrypted topic or log group must get its own key, and the logs key must grant the logs service of its own region."
+  }
+
 }
 
-run "regression_scp_revert_detection_in_us_east_1_passes" {
+# The stack-region resources keep the provider's region: with the detection
+# off, the quarantine topic gets its key in the stack's region, and the
+# account move log group still gets its key in us-east-1.
+run "stack_region_topics_and_log_groups_keep_the_stack_region_keys" {
   command = plan
 
   override_data {
     target = data.aws_region.current
     values = {
-      region = "us-east-1"
+      region = "eu-central-1"
     }
   }
 
   variables {
-    enable_scp_revert_detection = true
+    enable_quarantine_scp          = true
+    enable_quarantine_auto_detach  = true
+    enable_account_move_automation = true
   }
 
   assert {
-    condition     = local.region == "us-east-1" && length(aws_cloudwatch_event_rule.scp_revert) == 1
-    error_message = "Detection in us-east-1 must plan its rule without the region warning."
+    condition     = keys(aws_kms_key.sns_topics) == ["stack"] && aws_kms_key.sns_topics["stack"].region == "eu-central-1" && keys(aws_kms_key.cloudwatch_logs) == ["us-east-1"]
+    error_message = "Without the SCP change detection, the topic key must stay in the stack's region and the account move logs key must be in us-east-1."
+  }
+}
+
+# regression: the account move rule listened to Organizations CreateAccount
+# and MoveAccount events in the stack's region, where Organizations delivers
+# none (it delivers in us-east-1 only). From a stack in eu-central-1 every
+# regional resource of the function names us-east-1, with a logs key there.
+run "regression_account_move_runs_in_us_east_1" {
+  command = plan
+
+  override_data {
+    target = data.aws_region.current
+    values = {
+      region = "eu-central-1"
+    }
+  }
+
+  variables {
+    enable_account_move_automation = true
+  }
+
+  assert {
+    condition = alltrue([
+      aws_cloudwatch_event_rule.account_move[0].region == "us-east-1",
+      aws_cloudwatch_event_target.account_move[0].region == "us-east-1",
+      aws_lambda_permission.account_move_eventbridge[0].region == "us-east-1",
+      aws_lambda_function.account_move[0].region == "us-east-1",
+      aws_cloudwatch_log_group.account_move[0].region == "us-east-1",
+    ])
+    error_message = "Every regional resource of the account move function must be created in us-east-1, where Organizations delivers its events."
+  }
+
+  assert {
+    condition     = keys(aws_kms_key.cloudwatch_logs) == ["us-east-1"] && aws_kms_key.cloudwatch_logs["us-east-1"].region == "us-east-1"
+    error_message = "The account move log group's key must be in us-east-1 with the log group."
+  }
+}
+
+# regression: the quarantine release used to detach the quarantine SCP from
+# every target on a pipeline success, whether or not that run configured the
+# account. The release is manual now: the rule carries only the SNS
+# notification, and no function, role or queue that could detach exists.
+run "regression_quarantine_release_is_notification_only" {
+  command = plan
+
+  variables {
+    enable_quarantine_scp          = true
+    quarantine_scp_targets         = ["123456789012"]
+    enable_quarantine_auto_detach  = true
+    scp_revert_notification_emails = ["ops@example.com"]
+  }
+
+  assert {
+    condition = (
+      length(aws_cloudwatch_event_target.quarantine_detach) == 1 &&
+      aws_cloudwatch_event_target.quarantine_detach[0].target_id == "quarantine-detach-sns" &&
+      length(aws_kms_key.cloudwatch_logs) == 0
+    )
+    error_message = "The quarantine release must be a notification only: one SNS target and no function log group key."
   }
 }

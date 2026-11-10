@@ -9,7 +9,7 @@
 # separate JSON files under configurations/base/:
 #   - managed-rules.json              — AWS Config managed rules (31 rules)
 #   - management-only-rules.json      — Management account Config rules (3 rules)
-#   - security-hub-automation-rules.json — SecurityHub automation rules (36 rules)
+#   - security-hub-automation-rules.json — SecurityHub automation rules (29 rules)
 #   - remediation-configs.json        — Config rule auto-remediation (2 configs)
 #
 # SCPs, RCPs, and SecurityHub standards are defined in env/common.hcl.

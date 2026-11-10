@@ -145,11 +145,10 @@ def role_name(tf_file, resource):
 
 @pytest.mark.parametrize("tf_file, resource", [
     ("policy-strategy.tf", "policy_strategy_detach_lambda"),
-    ("quarantine.tf", "quarantine_auto_detach_lambda"),
 ])
 def test_scp_revert_leaves_the_sibling_detach_functions_alone(revert, tf_file, resource):
-    # regression: re-attaching after these
-    # functions gave an allow-list target FullAWSAccess back.
+    # regression: re-attaching after this
+    # function gave an allow-list target FullAWSAccess back.
     stub, handler = revert
     event = update_event("p-FullAWSAccess", role_name(tf_file, resource))
     event["detail"]["eventName"] = "DetachPolicy"
@@ -165,3 +164,12 @@ def test_quarantine_detach_default_names_the_tlz_pipeline():
     pipeline = re.search(r'resource "aws_codepipeline" "this" \{.*?name\s*=\s*"([^"]+)"',
                          (REPO / "modules/pipeline/codepipeline.tf").read_text(), re.S)
     assert json.loads(default.group(1)) == [pipeline.group(1)]
+
+
+def test_regression_quarantine_release_detaches_nothing():
+    # regression: a pipeline success detached the quarantine SCP from every
+    # target, whether or not that run configured the account. The release is
+    # manual: no code of the module detaches the quarantine SCP.
+    module = "\n".join(p.read_text() for p in ORG.glob("*.tf"))
+    assert "tlz-quarantine-auto-detach" not in module
+    assert 'resource "aws_lambda_function"' not in (ORG / "quarantine.tf").read_text()

@@ -1,6 +1,6 @@
 # Config Rules Module
 
-Organization-wide deployment of AWS Config Managed Rules and Custom Rules, Conformance Packs in the account the module runs in, and optional auto-remediation.
+Organization-wide deployment of AWS Config Managed Rules, Custom Rules and Conformance Packs, and optional auto-remediation.
 
 ## Deployment Targets
 
@@ -134,13 +134,13 @@ remediation_configs = [
 | `custom_rules` | Lambda-based custom rules, each with an optional `description` and one evaluation scope selector. The evaluator is either an existing function (`lambda_function_arn`) or a `lambda` block the module creates the function from. See [Evaluation Scope Selectors](#evaluation-scope-selectors) and [Configuration-Supplied Functions](#configuration-supplied-functions) | `list(object)` | `[]` | no |
 | `enable_custom_rule_lambdas` | Create the functions that `custom_rules[].lambda` and `remediation_configs[].target_document_lambda` describe. Off, every function ARN comes from outside | `bool` | `false` | no |
 | `config_lambda_log_retention_days` | Retention of the execution log group each created evaluator and remediation Lambda owns, `/aws/lambda/<function name>` (`0` = never expire). One value for the whole set. See [Lambda execution log groups](#lambda-execution-log-groups) | `number` | `365` | no |
-| `conformance_packs` | Conformance packs, created as `aws_config_conformance_pack` in the account and region the module runs in (the management account in `stacks/management/config-rules`), not organization-wide. `excluded_accounts` must stay empty: an account-level pack has no accounts to exclude, and a non-empty list is refused | `list(object)` | `[]` | no |
+| `conformance_packs` | Conformance packs, created as `aws_config_organization_conformance_pack`: AWS Config deploys each pack to the member accounts of the organization in the region the module runs in. `excluded_accounts` (12-digit account IDs) is merged with `global_excluded_accounts` | `list(object)` | `[]` | no |
 | `remediation_configs` | Auto-remediation configurations. `target_version` pins the document version; `target_account_name` names the account (a key of `account_ids`) that owns the document — the module then addresses it by its full ARN. `target_document_lambda` creates the remediation function the automation document invokes — see [Configuration-Supplied Functions](#configuration-supplied-functions) | `list(object)` | `[]` | no |
 | `account_ids` | Account name → account ID. Resolves account names in `deployment_targets` | `map(string)` | `{}` | no |
 | `ou_name_to_id` | OU name → OU ID. Resolves OU names in `deployment_targets` | `map(string)` | `{}` | no |
 | `account_ou_ids` | Account name → ID of the organizational unit that holds the account. Resolves OU names in `deployment_targets` | `map(string)` | `{}` | no |
 | `management_only_rules` | Config rules that are created in the management account only instead of organization-wide, each with an optional `description` and `tags`. Tags are available on this rule form only — the organization-wide rule API carries none | `list(object)` | `[]` | no |
-| `global_excluded_accounts` | Account IDs excluded from every organization Config rule, for accounts without a Config recorder | `list(string)` | `[]` | no |
+| `global_excluded_accounts` | Account IDs excluded from every organization Config rule and organization conformance pack, for accounts without a Config recorder | `list(string)` | `[]` | no |
 
 ## Outputs
 
@@ -162,8 +162,16 @@ The module creates the resource types below. Which of them a run actually create
 - `aws_config_organization_managed_rule`
 - `aws_config_config_rule`
 - `aws_config_organization_custom_rule`
-- `aws_config_conformance_pack`
+- `aws_config_organization_conformance_pack`
 - `aws_config_remediation_configuration`
+
+A deployment that created conformance packs with an earlier version of this
+module holds them as account-level packs (`aws_config_conformance_pack`) in the
+management account. The first apply with this version deletes those packs and
+creates organization packs of the same names in their place; evaluation
+results of the old packs are not carried over. Organization packs need trusted
+access for `config-multiaccountsetup` (the organization stack enables it with
+logging) and a Config recorder in every account they are not excluded from.
 
 `lambda-functions.tf` (behind `enable_custom_rule_lambdas`):
 

@@ -439,7 +439,7 @@ locals {
     flatten([for _, cfg in local.framework_configs : try(cfg.cloudwatch_log_data_protection_identifiers, [])])
   ))
 
-  # The 36 baseline rules from security-hub-automation-rules.json are the
+  # The 29 baseline rules from security-hub-automation-rules.json are the
   # first concat source (pattern managed_rules): a contribution from any
   # layer supplements the baseline instead of replacing it. A fallback to the
   # JSON only for an empty list would let the first contributed rule silently

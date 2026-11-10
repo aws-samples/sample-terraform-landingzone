@@ -5,7 +5,7 @@ variable "enable_cost_and_usage_report" {
 }
 
 variable "cur_config" {
-  description = "Cost and Usage Report configuration. Reports are written to the central log bucket."
+  description = "Cost and Usage Report configuration. Reports are written to the dedicated CUR bucket when enable_dedicated_bucket is true (the management cur stack sets it, so the bucket is in us-east-1), otherwise to s3_bucket_name."
   type = object({
     report_name                = optional(string, "tlz-cost-usage-report")
     s3_prefix                  = optional(string, "cur")

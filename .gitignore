@@ -49,6 +49,7 @@ stacks/**/versions.tf
 # config_recorders.tf carry real account IDs and role ARNs.
 stacks/**/providers.tf
 stacks/**/config_recorders.tf
+stacks/**/member_roles.tf
 stacks/**/outputs.tf
 stacks/**/adoption-imports.tf
 stacks/**/.terraform.lock.hcl

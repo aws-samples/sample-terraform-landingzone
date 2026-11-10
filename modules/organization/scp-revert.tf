@@ -2,35 +2,36 @@
 # SCP Revert Detection (G4)
 # =============================================================================
 
+# AWS Organizations is a global service: its CloudTrail events reach
+# EventBridge in us-east-1 only (Organizations user guide, "Monitoring your
+# organization with EventBridge"). A rule in another region is valid and
+# silent, so every regional resource of the detection and of the auto-revert
+# function (rule, targets, topic, its key, function, queue, log group and its
+# key) names this region, whatever region the stack runs in.
+# shortcut: only the aws partition is mapped; other partitions keep the
+# stack's region. Add the home region of aws-us-gov / aws-cn / aws-eusc once
+# one of them is deployed with detection.
+locals {
+  scp_revert_region = local.partition == "aws" ? "us-east-1" : local.region
+}
+
 resource "aws_sns_topic" "scp_revert" {
   count = var.enable_scp_revert_detection ? 1 : 0
 
+  region = local.scp_revert_region
   # Overridable: SNS CreateTopic is an upsert on an existing name — see
   # var.scp_revert_topic_name for why an apply-test must scope this.
   name = var.scp_revert_topic_name
   # EventBridge cannot publish to a topic under the AWS managed key
   # alias/aws/sns; this module's SNS key grants it (kms.tf).
-  kms_master_key_id = aws_kms_key.sns_topics[0].arn
-}
-
-# AWS Organizations is a global service: its CloudTrail events reach
-# EventBridge in us-east-1 only (Organizations user guide, "Monitoring your
-# organization with EventBridge"). A rule in another region is valid and
-# silent. A warning, not a refusal: an existing deployment in another region
-# keeps planning, and moving the rule is a decision for the operator.
-# shortcut: only the aws partition is checked; add the home region of
-# aws-us-gov / aws-cn / aws-eusc once one of them is deployed with detection.
-check "scp_revert_detection_region" {
-  assert {
-    condition     = !var.enable_scp_revert_detection || local.partition != "aws" || local.region == "us-east-1"
-    error_message = "enable_scp_revert_detection is on in ${local.region}, but AWS Organizations delivers its CloudTrail events (UpdatePolicy, DeletePolicy, DetachPolicy) to EventBridge in us-east-1 only. The rule ${var.scp_revert_rule_name} in ${local.region} receives none: no SCP change is reported or reverted. Deploy the detection in us-east-1."
-  }
+  kms_master_key_id = aws_kms_key.sns_topics[local.scp_revert_kms_key].arn
 }
 
 resource "aws_sns_topic_policy" "scp_revert" {
   count = var.enable_scp_revert_detection ? 1 : 0
 
-  arn = aws_sns_topic.scp_revert[0].arn
+  region = local.scp_revert_region
+  arn    = aws_sns_topic.scp_revert[0].arn
   policy = jsonencode(jsondecode(templatefile("${path.module}/../../configurations/policies/organization/sns-eventbridge-policy.json", {
     dns_suffix = local.dns_suffix
     topic_arn  = aws_sns_topic.scp_revert[0].arn
@@ -40,6 +41,7 @@ resource "aws_sns_topic_policy" "scp_revert" {
 resource "aws_sns_topic_subscription" "scp_revert" {
   for_each = var.enable_scp_revert_detection ? toset(var.scp_revert_notification_emails) : toset([])
 
+  region    = local.scp_revert_region
   topic_arn = aws_sns_topic.scp_revert[0].arn
   protocol  = "email"
   endpoint  = each.value
@@ -48,6 +50,7 @@ resource "aws_sns_topic_subscription" "scp_revert" {
 resource "aws_cloudwatch_event_rule" "scp_revert" {
   count = var.enable_scp_revert_detection ? 1 : 0
 
+  region = local.scp_revert_region
   # Overridable: EventBridge PutRule is an upsert on an existing name — see
   # var.scp_revert_rule_name for why an apply-test must scope this.
   name        = var.scp_revert_rule_name
@@ -66,6 +69,7 @@ resource "aws_cloudwatch_event_rule" "scp_revert" {
 resource "aws_cloudwatch_event_target" "scp_revert" {
   count = var.enable_scp_revert_detection ? 1 : 0
 
+  region    = local.scp_revert_region
   rule      = aws_cloudwatch_event_rule.scp_revert[0].name
   target_id = "scp-revert-sns"
   arn       = aws_sns_topic.scp_revert[0].arn
@@ -116,12 +120,10 @@ EXCLUSION_PATTERNS = [
     # This function's own role: its UpdatePolicy and AttachPolicy calls are
     # CloudTrail events too and must not trigger it again.
     r":role/(?:.*/)?tlz-scp-auto-revert-lambda$",
-    # The two sibling functions of this module that detach policies on
-    # purpose (policy-strategy.tf, quarantine.tf): re-attaching after them
-    # would give an allow-list target FullAWSAccess back, or re-quarantine
-    # a released account.
+    # The sibling function of this module that detaches policies on purpose
+    # (policy-strategy.tf): re-attaching after it would give an allow-list
+    # target FullAWSAccess back.
     r":role/(?:.*/)?tlz-policy-strategy-detach-lambda$",
-    r":role/(?:.*/)?tlz-quarantine-auto-detach-lambda$",
 ]
 
 KNOWN_GOOD_FILE = os.path.join(
@@ -278,6 +280,8 @@ resource "aws_iam_role_policy" "scp_auto_revert_lambda" {
 resource "aws_sqs_queue" "scp_auto_revert_dlq" {
   count = local.enable_scp_auto_revert ? 1 : 0
 
+  # Lambda requires its dead-letter queue in the function's region.
+  region                    = local.scp_revert_region
   name                      = var.scp_auto_revert_dlq_name
   message_retention_seconds = 1209600
   sqs_managed_sse_enabled   = true
@@ -286,6 +290,7 @@ resource "aws_sqs_queue" "scp_auto_revert_dlq" {
 resource "aws_lambda_function" "scp_auto_revert" {
   count = local.enable_scp_auto_revert ? 1 : 0
 
+  region        = local.scp_revert_region
   function_name = "tlz-scp-auto-revert"
   description   = "Automatically reverts unauthorized SCP modifications detected via CloudTrail"
   role          = aws_iam_role.scp_auto_revert_lambda[0].arn
@@ -315,6 +320,7 @@ resource "aws_lambda_function" "scp_auto_revert" {
 # (second target on the existing scp_revert rule — SNS target remains active)
 resource "aws_cloudwatch_event_target" "scp_auto_revert_lambda" {
   count     = local.enable_scp_auto_revert ? 1 : 0
+  region    = local.scp_revert_region
   rule      = aws_cloudwatch_event_rule.scp_revert[0].name
   target_id = "scp-auto-revert-lambda"
   arn       = aws_lambda_function.scp_auto_revert[0].arn
@@ -324,20 +330,24 @@ resource "aws_cloudwatch_event_target" "scp_auto_revert_lambda" {
   depends_on = [aws_cloudwatch_log_group.scp_auto_revert]
 }
 
-# The function's own execution log group — same class and same reasoning as
-# aws_cloudwatch_log_group.quarantine_auto_detach in this module. CreateLogGroup
-# is create-only: an account where the function has already run must import the
-# group (README, "Lambda execution log groups").
+# The function's own execution log group. Without it Lambda creates
+# /aws/lambda/<function name> implicitly on the first invocation, outside the
+# state, without retention and never destroyed; the name derives from the
+# function so the two cannot drift apart. CreateLogGroup is create-only: an
+# account where the function has already run must import the group (README,
+# "Lambda execution log groups").
 resource "aws_cloudwatch_log_group" "scp_auto_revert" {
   count = local.enable_scp_auto_revert ? 1 : 0
 
+  region            = local.scp_revert_region
   name              = "/aws/lambda/${aws_lambda_function.scp_auto_revert[0].function_name}"
   retention_in_days = var.scp_auto_revert_log_retention_days
-  kms_key_id        = aws_kms_key.cloudwatch_logs[0].arn
+  kms_key_id        = aws_kms_key.cloudwatch_logs[local.scp_revert_kms_key].arn
 }
 
 resource "aws_lambda_permission" "scp_auto_revert" {
   count         = local.enable_scp_auto_revert ? 1 : 0
+  region        = local.scp_revert_region
   statement_id  = "AllowEventBridgeInvoke"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.scp_auto_revert[0].function_name

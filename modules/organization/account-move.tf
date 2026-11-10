@@ -3,6 +3,12 @@
 # Automatically moves accounts between OUs based on Organizations API events.
 # =============================================================================
 
+# Organizations delivers CreateAccount and MoveAccount to EventBridge in the
+# same single region as the SCP change events, so every regional resource of
+# this function (rule, target, permission, function, log group and its key)
+# names local.scp_revert_region (scp-revert.tf): us-east-1 in the aws
+# partition, the stack's region in the others.
+
 data "archive_file" "account_move" {
   count       = var.enable_account_move_automation ? 1 : 0
   type        = "zip"
@@ -16,9 +22,10 @@ data "archive_file" "account_move" {
 
 resource "aws_cloudwatch_log_group" "account_move" {
   count             = var.enable_account_move_automation ? 1 : 0
+  region            = local.scp_revert_region
   name              = "/aws/lambda/tlz-account-move"
   retention_in_days = var.account_move_log_retention_days
-  kms_key_id        = aws_kms_key.cloudwatch_logs[0].arn
+  kms_key_id        = aws_kms_key.cloudwatch_logs[local.scp_revert_kms_key].arn
 }
 
 resource "aws_iam_role" "account_move_lambda" {
@@ -51,6 +58,7 @@ resource "aws_iam_role_policy" "account_move_logs" {
 
 resource "aws_lambda_function" "account_move" {
   count         = var.enable_account_move_automation ? 1 : 0
+  region        = local.scp_revert_region
   function_name = "tlz-account-move"
   role          = aws_iam_role.account_move_lambda[0].arn
   handler       = "index.handler"
@@ -74,7 +82,8 @@ resource "aws_lambda_function" "account_move" {
 }
 
 resource "aws_cloudwatch_event_rule" "account_move" {
-  count = var.enable_account_move_automation ? 1 : 0
+  count  = var.enable_account_move_automation ? 1 : 0
+  region = local.scp_revert_region
   # EventBridge PutRule is an upsert — see var.account_move_rule_name for why
   # an apply-test must scope this.
   name        = var.account_move_rule_name
@@ -92,6 +101,7 @@ resource "aws_cloudwatch_event_rule" "account_move" {
 
 resource "aws_cloudwatch_event_target" "account_move" {
   count     = var.enable_account_move_automation ? 1 : 0
+  region    = local.scp_revert_region
   rule      = aws_cloudwatch_event_rule.account_move[0].name
   target_id = "account-move-lambda"
   arn       = aws_lambda_function.account_move[0].arn
@@ -99,16 +109,10 @@ resource "aws_cloudwatch_event_target" "account_move" {
 
 resource "aws_lambda_permission" "account_move_eventbridge" {
   count         = var.enable_account_move_automation ? 1 : 0
+  region        = local.scp_revert_region
   statement_id  = "AllowEventBridgeInvoke"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.account_move[0].function_name
   principal     = "events.${local.dns_suffix}"
   source_arn    = aws_cloudwatch_event_rule.account_move[0].arn
-}
-
-check "quarantine_auto_detach_lambda_operational" {
-  assert {
-    condition     = !local.enable_quarantine_auto_detach || length(aws_lambda_function.quarantine_auto_detach) > 0
-    error_message = "Quarantine SCP auto-detach is enabled but the Lambda function was not created. Verify that enable_quarantine_scp and enable_quarantine_auto_detach are both true."
-  }
 }

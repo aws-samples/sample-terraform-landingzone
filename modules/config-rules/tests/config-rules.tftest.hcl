@@ -76,7 +76,7 @@ run "no_rules_configured" {
   }
 
   assert {
-    condition     = length(aws_config_conformance_pack.this) == 0
+    condition     = length(aws_config_organization_conformance_pack.this) == 0
     error_message = "No conformance packs must be created without conformance_packs."
   }
 
@@ -256,7 +256,7 @@ run "custom_configuration" {
   }
 
   assert {
-    condition     = length(aws_config_conformance_pack.this) == 1
+    condition     = length(aws_config_organization_conformance_pack.this) == 1
     error_message = "One conformance pack must be created."
   }
 
@@ -1217,12 +1217,36 @@ run "managed_rule_resource_types_scope" {
 }
 
 # -----------------------------------------------------------------------------
-# conformance_packs excluded_accounts is refused
+# regression: conformance packs are organization packs and honour exclusions
 #
-# aws_config_conformance_pack is account-level and has no exclusion list, so a
-# configured exclusion would silently do nothing. The module refuses it instead.
+# The packs were account-level and evaluated the management account only; a
+# configured exclusion was refused because it had nothing to act on. They are
+# organization packs now, and the pack's and the global exclusions reach them.
 # -----------------------------------------------------------------------------
-run "conformance_pack_excluded_accounts_rejected" {
+run "regression_conformance_pack_is_organization_wide_with_exclusions" {
+  command = plan
+
+  variables {
+    global_excluded_accounts = ["444444444444"]
+    conformance_packs = [
+      {
+        name              = "tlz-operational-best-practices"
+        template_body     = "Resources:\n  Placeholder:\n    Type: AWS::Config::ConfigRule\n"
+        excluded_accounts = ["555555555555"]
+      }
+    ]
+  }
+
+  assert {
+    condition = (
+      length(aws_config_organization_conformance_pack.this) == 1 &&
+      toset(aws_config_organization_conformance_pack.this["tlz-operational-best-practices"].excluded_accounts) == toset(["555555555555", "444444444444"])
+    )
+    error_message = "The conformance pack must be an organization pack excluding the pack's and the global accounts."
+  }
+}
+
+run "conformance_pack_excluded_account_malformed_rejected" {
   command = plan
 
   variables {
@@ -1230,7 +1254,7 @@ run "conformance_pack_excluded_accounts_rejected" {
       {
         name              = "tlz-operational-best-practices"
         template_body     = "Resources:\n  Placeholder:\n    Type: AWS::Config::ConfigRule\n"
-        excluded_accounts = ["555555555555"]
+        excluded_accounts = ["5555"]
       }
     ]
   }

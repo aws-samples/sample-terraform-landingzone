@@ -52,13 +52,6 @@ output "scp_auto_revert_lambda_arn" {
   value       = try(aws_lambda_function.scp_auto_revert[0].arn, null)
 }
 
-# --- Quarantine Auto-Detach (G4) ---
-
-output "quarantine_auto_detach_lambda_arn" {
-  description = "ARN of the quarantine auto-detach Lambda function."
-  value       = try(aws_lambda_function.quarantine_auto_detach[0].arn, null)
-}
-
 # --- Organization-Level Outputs (consumed by dependent Terragrunt stacks) ---
 
 output "organization_id" {

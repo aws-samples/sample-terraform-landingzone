@@ -236,7 +236,7 @@ variable "custom_rules" {
 # --- Conformance Packs ---
 
 variable "conformance_packs" {
-  description = "List of Conformance Pack definitions, deployed as account-level packs in the account and region the module runs in (not organization-wide). excluded_accounts must stay empty: an account-level pack has no accounts to exclude."
+  description = "List of Conformance Pack definitions, deployed as organization conformance packs to the member accounts of the organization in the region the module runs in. excluded_accounts (12-digit account IDs) is merged with global_excluded_accounts."
   type = list(object({
     name              = string
     template_body     = optional(string, null)
@@ -264,16 +264,13 @@ variable "conformance_packs" {
     error_message = "Each conformance_packs entry must set exactly one of template_body or template_s3_uri."
   }
 
-  # aws_config_conformance_pack is account-level: it deploys to this account
-  # only and has no exclusion list, so a configured exclusion would silently do
-  # nothing; it is refused instead.
-  # shortcut: refusal rather than an organization pack; switch to
-  # aws_config_organization_conformance_pack when exclusions are needed.
   validation {
-    condition = alltrue([
-      for pack in var.conformance_packs : length(try(pack.excluded_accounts, [])) == 0
-    ])
-    error_message = "conformance_packs excluded_accounts is not supported: the module creates account-level conformance packs in the account it runs in, which exclude no account. Remove the entry's excluded_accounts."
+    condition = alltrue(flatten([
+      for pack in var.conformance_packs : [
+        for id in pack.excluded_accounts : can(regex("^[0-9]{12}$", id))
+      ]
+    ]))
+    error_message = "Each conformance_packs excluded_accounts entry must be a 12-digit AWS account ID."
   }
 }
 
@@ -504,7 +501,7 @@ variable "management_only_rules" {
 }
 
 variable "global_excluded_accounts" {
-  description = "Account IDs excluded from ALL org Config rules (accounts without Config Recorder)"
+  description = "Account IDs excluded from ALL org Config rules and organization conformance packs (accounts without Config Recorder)"
   type        = list(string)
   default     = []
 

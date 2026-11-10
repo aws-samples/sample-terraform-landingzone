@@ -9,13 +9,14 @@ Each module is self-contained under `modules/` with its own README, inputs, outp
 | [bootstrap](../../modules/bootstrap/README.md) | Creates S3 bucket and DynamoDB table for Terraform remote state with optional KMS encryption |
 | [budgets](../../modules/budgets/README.md) | Creates AWS Budgets for cost monitoring and alerting in the Management Account |
 | [config-recorder-member](../../modules/config-recorder-member/README.md) | Creates an AWS Config Recorder and Delivery Channel for a single member account |
-| [config-rules](../../modules/config-rules/README.md) | Organization-wide deployment of AWS Config Managed Rules, Custom Rules, Conformance Packs, and auto-remediation |
+| [config-rules](../../modules/config-rules/README.md) | Organization-wide deployment of AWS Config Managed Rules, Custom Rules, organization Conformance Packs, and auto-remediation |
 | [control-tower](../../modules/control-tower/README.md) | Creates and manages an AWS Control Tower Landing Zone with service roles and optional guardrails |
 | [cur](../../modules/cur/README.md) | Creates an AWS Cost and Usage Report with optional S3 bucket and KMS encryption |
 | [deployment-role](../../modules/deployment-role/README.md) | Creates the TLZDeploymentRole IAM role for cross-account Terraform operations |
 | [ec2-compute](../../modules/ec2-compute/README.md) | EC2 building blocks for firewall appliances and workload compute: launch templates, auto-scaling groups, single instances, SSM documents and associations |
 | [iam](../../modules/iam/README.md) | Baseline IAM roles, SAML identity providers, and customer-managed policies |
 | [logging](../../modules/logging/README.md) | Centralized logging: org-wide CloudTrail, Config recorder/aggregator, and KMS-encrypted S3 bucket |
+| [member-roles](../../modules/member-roles/README.md) | Creates the IAM roles and customer-managed policies whose deployment_targets name a member account (Backup-Role, EC2-Default-SSM-Role) in that account |
 | [monitoring](../../modules/monitoring/README.md) | CloudWatch Dashboards, SNS Alerting, and EventBridge rules for landing zone observability |
 | [networking](../../modules/networking/README.md) | VPCs, Subnets, NAT Gateways, Transit Gateway, Route 53, Network Firewall, IPAM, and Flow Logs |
 | [organization](../../modules/organization/README.md) | Manages OUs, SCPs, Tag Policies, Backup Policies, and Delegated Administrator in AWS Organizations |

@@ -75,7 +75,7 @@ runbook.
    | `management/logging` | `accounts`, `organization` | `stacks/management/logging/terragrunt.hcl:28,39` |
    | `management/backup` | `accounts` | `stacks/management/backup/terragrunt.hcl:27` |
    | `management/security` | `logging`, `accounts`, `organization` | `stacks/management/security/terragrunt.hcl:35,48,60` |
-   | `management/config-rules` | `accounts`, `organization`, `logging` | `stacks/management/config-rules/terragrunt.hcl:154,168,181` |
+   | `management/config-rules` | `accounts`, `organization`, `logging` | `stacks/management/config-rules/terragrunt.hcl:149,168,181` |
 
    `management/accounts` was never applied (9 to add), so
    `cd stacks/management/accounts && terragrunt output -json` prints `{}`,

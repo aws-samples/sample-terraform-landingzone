@@ -85,14 +85,16 @@ Every role, policy, user and group is created in the account the provider runs
 in; `stacks/management/iam` is the only stack that calls this module, so that is
 the management account. `deployment_targets` is accepted and resolved into the
 `deployment_targets` output, but the module creates nothing in the accounts it
-names, and a `check` block warns on every plan that sets it. The shipped
-`env/common.hcl.example` gives `Backup-Role` and `EC2-Default-SSM-Role` the
-targets Security, Infrastructure and Workloads; neither role exists in a member
-account after an apply. The organization backup policy `primary-backup-plan`
-selects its resources with `arn:<partition>:iam::$account:role/Backup-Role` in
-each member account it is attached to, so its backup jobs need that role there,
-created by other means (for example a CloudFormation StackSet), before the
-policy is attached.
+names, and a `check` block warns on every plan that sets it. Roles and
+customer-managed policies with `deployment_targets` reach the member accounts
+through `stacks/management/member-roles` (toggle `enable_member_roles`), which
+calls [modules/member-roles](../member-roles/README.md) once per active account
+with the same lists. The shipped `env/common.hcl.example` gives `Backup-Role`
+and `EC2-Default-SSM-Role` the targets Security, Infrastructure and Workloads;
+the organization backup policy `primary-backup-plan` selects its resources with
+`arn:<partition>:iam::$account:role/Backup-Role` in each member account it is
+attached to. Users and groups with `deployment_targets` are still created in
+the management account only.
 
 ## Role Policies and Exclusive Management
 

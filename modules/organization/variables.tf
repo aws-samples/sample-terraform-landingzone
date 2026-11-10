@@ -544,13 +544,13 @@ variable "opt_in_regions" {
 }
 
 variable "enable_quarantine_auto_detach" {
-  description = "Enable automatic detachment of the quarantine SCP from new accounts after pipeline completion via Lambda. Requires enable_quarantine_scp = true."
+  description = "Notify scp_revert_notification_emails when a pipeline in quarantine_detach_pipeline_names succeeds, so an operator releases the quarantine SCP from the accounts that run configured. The release is manual: nothing detaches the SCP automatically. Requires enable_quarantine_scp = true."
   type        = bool
   default     = false
 }
 
 variable "quarantine_detach_pipeline_names" {
-  description = "CodePipeline names whose SUCCEEDED state triggers the quarantine-SCP detach (enable_quarantine_auto_detach). The rule matches only these pipelines in this account and region; before this input it matched every pipeline. The default is the name modules/pipeline gives the TLZ deployment pipeline."
+  description = "CodePipeline names whose SUCCEEDED state triggers the quarantine-SCP release notification (enable_quarantine_auto_detach). The rule matches only these pipelines in this account and region. The default is the name modules/pipeline gives the TLZ deployment pipeline."
   type        = list(string)
   default     = ["tlz-deployment-pipeline"]
 
@@ -575,7 +575,7 @@ variable "quarantine_detach_topic_name" {
 }
 
 variable "quarantine_detach_rule_name" {
-  description = "Name of the EventBridge rule that detects CodePipeline SUCCEEDED events for the quarantine-SCP detach (created when enable_quarantine_scp and enable_quarantine_auto_detach are both true). The default is the module's standard name. EventBridge PutRule is an UPSERT: an account already carrying this name is silently adopted rather than failing, so any apply-test of this module against a live account must override this with a test-scoped name (tlz-l4test-) — otherwise `terraform test`'s automatic teardown deletes the live rule and both its targets (SNS and Lambda). A toggle that is off is not a safety property — see quarantine_detach_topic_name. The name must stay inside the tlz- namespace: the organization guardrails (ProtectEventBridgeRules) protect only arn:*:events:*:*:rule/tlz-* from tampering; this validation carries the invariant. A changed default is a destroy/create of a deployed rule, so leave it at the literal below in production."
+  description = "Name of the EventBridge rule that detects CodePipeline SUCCEEDED events for the quarantine-SCP detach (created when enable_quarantine_scp and enable_quarantine_auto_detach are both true). The default is the module's standard name. EventBridge PutRule is an UPSERT: an account already carrying this name is silently adopted rather than failing, so any apply-test of this module against a live account must override this with a test-scoped name (tlz-l4test-) — otherwise `terraform test`'s automatic teardown deletes the live rule and its SNS target. A toggle that is off is not a safety property — see quarantine_detach_topic_name. The name must stay inside the tlz- namespace: the organization guardrails (ProtectEventBridgeRules) protect only arn:*:events:*:*:rule/tlz-* from tampering; this validation carries the invariant. A changed default is a destroy/create of a deployed rule, so leave it at the literal below in production."
   type        = string
   default     = "tlz-quarantine-scp-pipeline-completion"
 
@@ -585,23 +585,12 @@ variable "quarantine_detach_rule_name" {
   }
 }
 
-variable "quarantine_auto_detach_dlq_name" {
-  description = "Name of the SQS dead-letter queue of the quarantine auto-detach Lambda (created when enable_quarantine_scp and enable_quarantine_auto_detach are both true). The default is the module's standard name. SQS CreateQueue is IDEMPOTENT for an existing queue with identical attributes (the module's own attributes always are): it returns the existing queue instead of failing, so any apply-test of this module against a live account must override this with a test-scoped name (tlz-l4test-) — otherwise `terraform test`'s automatic teardown deletes the live queue together with every failed detach event it holds. A toggle that is off is not a safety property — see quarantine_detach_topic_name. The Lambda's execution policy (sqs:SendMessage on the DLQ) follows this name; Lambda validates that grant against dead_letter_config at create. Deliberately NOT pinned to the tlz- namespace: no organization guardrail names an SQS queue ARN (the RCPs' sqs:* statements are name-independent), so there is no protection for a validation to preserve; keep the prefix anyway for legibility. A changed default is a destroy/create of a deployed queue (its messages included), so leave it at the literal below in production."
-  type        = string
-  default     = "tlz-quarantine-auto-detach-dlq"
-
-  validation {
-    condition     = can(regex("^[a-zA-Z0-9_-]{1,80}$", var.quarantine_auto_detach_dlq_name))
-    error_message = "quarantine_auto_detach_dlq_name must be 1-80 characters of letters, digits, underscore or hyphen — the SQS standard-queue naming rule (no dot, so no accidental .fifo suffix on a standard queue)."
-  }
-}
-
 # --- SCP Revert Detection (G4) ---
 
 # --- Account Move Automation ---
 
 variable "enable_account_move_automation" {
-  description = "Enable EventBridge + Lambda automation to move accounts between OUs based on Organizations API events"
+  description = "Enable EventBridge + Lambda automation to move accounts between OUs based on Organizations API events. AWS Organizations delivers its CloudTrail events to EventBridge in us-east-1 only (aws partition), so the rule, the function, its log group and the log group's key are created in us-east-1 whatever region the stack runs in."
   type        = bool
   default     = false
 }
@@ -646,17 +635,6 @@ variable "policy_strategy_detach_log_kms_key_arn" {
   }
 }
 
-variable "quarantine_auto_detach_log_retention_days" {
-  description = "CloudWatch log retention in days for the quarantine auto-detach Lambda's own execution log group /aws/lambda/tlz-quarantine-auto-detach (0 = never expire). The default is one year: CKV_AWS_338 requires at least that, and the group holds only this function's own execution output, so the storage is a few MB per year"
-  type        = number
-  default     = 365
-
-  validation {
-    condition     = contains([0, 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653], var.quarantine_auto_detach_log_retention_days)
-    error_message = "quarantine_auto_detach_log_retention_days must be a valid CloudWatch Logs retention value."
-  }
-}
-
 variable "scp_auto_revert_log_retention_days" {
   description = "CloudWatch log retention in days for the SCP auto-revert Lambda's own execution log group /aws/lambda/tlz-scp-auto-revert (0 = never expire). The default is one year: CKV_AWS_338 requires at least that, and the group holds only this function's own execution output, so the storage is a few MB per year"
   type        = number
@@ -682,7 +660,7 @@ variable "account_move_rule_name" {
 # --- SCP Revert Detection (G4) ---
 
 variable "enable_scp_revert_detection" {
-  description = "Enable EventBridge-based detection of SCP modifications outside Terraform. AWS Organizations delivers its CloudTrail events to EventBridge in us-east-1 only (aws partition): in any other region the rule receives nothing, and the check scp_revert_detection_region warns at plan."
+  description = "Enable EventBridge-based detection of SCP modifications outside Terraform. AWS Organizations delivers its CloudTrail events to EventBridge in us-east-1 only (aws partition), so the rule, its topic, the topic's key and the auto-revert function are created in us-east-1 whatever region the stack runs in."
   type        = bool
   default     = false
 }

@@ -11,7 +11,7 @@ output "rule_arns" {
 output "conformance_pack_arns" {
   description = "Map of conformance pack name to pack ARN"
   value = {
-    for name, pack in aws_config_conformance_pack.this : name => pack.arn
+    for name, pack in aws_config_organization_conformance_pack.this : name => pack.arn
   }
 }
 
@@ -27,7 +27,7 @@ output "custom_rule_count" {
 
 output "conformance_pack_count" {
   description = "Number of conformance packs created"
-  value       = length(aws_config_conformance_pack.this)
+  value       = length(aws_config_organization_conformance_pack.this)
 }
 
 output "remediation_count" {

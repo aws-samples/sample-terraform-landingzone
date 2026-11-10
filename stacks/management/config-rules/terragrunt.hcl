@@ -1,8 +1,9 @@
-# Config Rules — Org-wide Managed/Custom Rules, Conformance Packs
-# Cross-account dependencies are conditional: only enabled when member account
-# IDs are configured in accounts.hcl (full multi-account deployment).
-# In Org-Only mode, Config Rules run with member accounts excluded
-# (they have no Config Recorder without cross-account stacks).
+# Config Rules — Org-wide Managed/Custom Rules, Organization Conformance Packs
+# Cross-account dependencies are conditional: only enabled when the Audit
+# account ID resolves (accounts.hcl or the SSM parameter the recorder stacks
+# read; full multi-account deployment). In Org-Only mode, Config Rules and
+# conformance packs run with member accounts excluded (they have no Config
+# Recorder without cross-account stacks).
 
 include "root" {
   path = find_in_parent_folders("root.hcl")
@@ -10,15 +11,18 @@ include "root" {
 
 locals {
   common     = read_terragrunt_config(find_in_parent_folders("env/common.hcl"))
-  accounts   = read_terragrunt_config(find_in_parent_folders("env/accounts.hcl"))
   compliance = read_terragrunt_config("${get_repo_root()}/configurations/loader.hcl")
 
-  # Cross-account mode: true when audit_account_id is explicitly set in accounts.hcl.
-  # Unlike the member recorder stacks (cross_account.hcl), this does NOT read
-  # the SSM parameter /tlz/accounts/Audit/id: with accounts.hcl empty every
-  # member account is excluded below, even once recorders run there
-  # (docs/getting-started.md, section 1).
-  cross_account_enabled = local.accounts.locals.audit_account_id != ""
+  # Cross-account mode: true when the Audit account ID resolves. The
+  # resolution is the Audit recorder stack's own file, read here rather than
+  # copied, so both stacks see the same value: audit_account_id in
+  # accounts.hcl when set, else the SSM parameter /tlz/accounts/Audit/id that
+  # modules/accounts writes. ParameterNotFound (no Audit account yet) resolves
+  # to "" and keeps every member account excluded below; any other failure of
+  # the read aborts the run. Only account_id is taken from that file: this
+  # unit runs in the management account and assumes no role.
+  audit_account_id      = read_terragrunt_config("${get_repo_root()}/stacks/audit/config-recorder/cross_account.hcl").locals.account_id
+  cross_account_enabled = local.audit_account_id != ""
 
   # Config Recorder Members: single stack deploys recorders to all member accounts
   enable_config_recorder_members = local.common.locals.enable_config_recorder_members

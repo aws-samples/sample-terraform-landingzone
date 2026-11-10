@@ -203,11 +203,17 @@ resource "aws_config_organization_custom_rule" "this" {
 # =============================================================================
 # Conformance packs — organization-wide compliance monitoring
 # =============================================================================
+#
+# Organization packs, like the rules above: AWS Config deploys each pack to the
+# member accounts of the organization, minus the pack's own exclusions and the
+# global exclusions. Created from the management account (or a Config
+# delegated administrator) in the region the module runs in.
 
-resource "aws_config_conformance_pack" "this" {
+resource "aws_config_organization_conformance_pack" "this" {
   for_each = local.conformance_packs_map
 
-  name = each.value.name
+  name              = each.value.name
+  excluded_accounts = distinct(concat(each.value.excluded_accounts, var.global_excluded_accounts))
 
   # Template body or S3 URI (one of the two)
   template_body   = each.value.template_body

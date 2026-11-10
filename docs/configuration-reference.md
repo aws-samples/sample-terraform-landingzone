@@ -22,6 +22,7 @@ All variables, modules, and deployment modes of the Terraform Landing Zone with 
   - [ec2-compute](#ec2-compute)
   - [iam](#iam)
   - [logging](#logging)
+  - [member-roles](#member-roles)
   - [monitoring](#monitoring)
   - [networking](#networking)
   - [organization](#organization)
@@ -40,114 +41,114 @@ Variables from `env/common.hcl.example` that control the Landing Zone deployment
 
 | Variable | Default | Description |
 |---|---|---|
-| `region` | `"eu-central-1"` |  |
-| `aws_profile` | `"your-aws-profile"` |  |
+| `region` | `"eu-central-1"` | AWS region the providers and the S3 state backend use; an `eusc-` prefix also selects the aws-eusc partition |
+| `aws_profile` | `"your-aws-profile"` | Local AWS CLI profile of the providers and the state backend; empty uses the default credential chain |
 | `partition` | `"aws"` | "aws" or "aws-eusc" |
 | `state_backend` | `"local"` | With `"local"`, state is written to a stable absolute per-unit path **outside the repository**: `$TLZ_STATE_DIR/<unit>/terraform.tfstate`, default `~/.tlz-state/<unit>/terraform.tfstate` — not inside `.terragrunt-cache`, not inside the repo. One-time migration of pre-existing state: see [Operations](operations.md) |
-| `state_bucket_name` | `"your-terraform-state-bucket"` |  |
-| `lock_table_name` | `"terraform-locks"` |  |
-| `account_access_role_name` | `"OrganizationAccountAccessRole"` |  |
+| `state_bucket_name` | `"your-terraform-state-bucket"` | S3 bucket that holds the Terraform state when `state_backend = "s3"`; the bootstrap stack creates it |
+| `lock_table_name` | `"terraform-locks"` | DynamoDB table for state locking when `state_backend = "s3"`; the bootstrap stack creates it |
+| `account_access_role_name` | `"AWSControlTowerExecution"` | Cross-account role the stacks assume in existing member accounts: `AWSControlTowerExecution` for Control Tower provisioned accounts, `OrganizationAccountAccessRole` otherwise |
 | `created_account_role_name` | `null` | Role CreateAccount makes inside a new member account; null = same as `account_access_role_name`, which stays the role the stacks assume to reach existing accounts |
 | `compliance_frameworks` | `[]` | Names of the framework configurations to activate, see [Compliance Frameworks](#compliance-frameworks) below. e.g. ["nist-800-53"] or ["hipaa", "nist-800-53"] |
 | `apply_network_defaults` | `false` | Enable advisory network configs from frameworks |
-| `enable_organization` | `true` |  |
-| `enable_control_tower` | `false` |  |
-| `enable_accounts` | `true` |  |
-| `enable_logging` | `false` |  |
-| `enable_security` | `false` |  |
-| `enable_iam` | `false` |  |
+| `enable_organization` | `true` | Deploys the organization stack: OUs, organization policies, delegated administrators and trusted service access |
+| `enable_control_tower` | `false` | Deploys the Control Tower stack: landing zone, governed regions and controls |
+| `enable_accounts` | `true` | Deploys the accounts stack, which creates the member accounts listed in `accounts` |
+| `enable_logging` | `false` | Deploys the management logging stack and adds CloudTrail and Config to the organization's trusted service access |
+| `enable_security` | `false` | Deploys the management security stack and adds GuardDuty, Security Hub and Access Analyzer to trusted service access |
+| `enable_iam` | `false` | Deploys the IAM stack with the roles, customer-managed policies and SAML providers configured below |
 | `enable_config_recorder_members` | `false` | Deploy Config Recorders into member accounts without a dedicated recorder stack, from the management account |
-| `enable_config_rules` | `false` |  |
-| `enable_networking` | `false` |  |
-| `enable_monitoring` | `false` |  |
+| `enable_member_roles` | `true` | Create the roles and customer-managed policies whose deployment_targets name member accounts in those accounts (stacks/management/member-roles); Backup-Role is what the backup policy runs as. Unset counts as false |
+| `enable_config_rules` | `false` | Deploys the config-rules stack: managed and custom Config rules, conformance packs and remediations |
+| `enable_networking` | `false` | Deploys the networking stack: VPCs, Transit Gateway, DNS, Network Firewall and IPAM |
+| `enable_monitoring` | `false` | Deploys the monitoring stack: SNS alerting, EventBridge rules and CloudWatch log groups |
 | `enable_service_catalog` | `false` | Enable Service Catalog portfolio sharing across the organization |
 | `enable_sns_forwarder` | `false` | Enable cross-account SNS forwarder Lambda |
 | `enable_s3_object_lock` | `false` | Enable S3 Object Lock (WORM) on central log bucket |
 | `enable_cloudtrail_lake` | `false` | Enable CloudTrail Lake event data store for SQL querying. Closed to new customers since 2026-05-31 — enable only for an account onboarded before the cutoff |
 | `enable_vpc_flow_logs_bucket` | `false` | Enable dedicated S3 bucket for VPC flow logs |
-| `enable_account_move_automation` | `false` | Enable EventBridge + Lambda automation to move accounts between OUs |
+| `enable_account_move_automation` | `false` | Enable EventBridge + Lambda automation to move accounts between OUs; created in us-east-1, where Organizations delivers its events |
 | `account_move_log_retention_days` | `90` | CloudWatch log retention for the account move Lambda |
 | `enable_control_tower_enrollment` | `false` | Enable check block guidance for CT account enrollment |
-| `default_tags` | `...` |  |
-| `organizational_units` | `...` |  |
-| `declarative_policies` | `...` |  |
-| `service_control_policies` | `...` |  |
-| `tag_policies` | `...` |  |
-| `backup_policies` | `...` |  |
-| `service_access_principals` | `...` |  |
+| `default_tags` | `...` | Tags the providers apply to every resource they create |
+| `organizational_units` | `...` | OU hierarchy by `name` and `parent_name` (`__root__` for the root); `ignore = true` leaves an OU out of policy attachments |
+| `declarative_policies` | `...` | Declarative EC2 policies with their target OUs, added to those of `base.tfvars` and the frameworks; `__LOADER_INJECT__` takes the versioned document of the same name |
+| `service_control_policies` | `...` | SCPs with their target OUs, added to those of `base.tfvars` and the frameworks; `__LOADER_INJECT__` takes the versioned document of the same name |
+| `tag_policies` | `...` | Tag policies with their targets, added to those of `base.tfvars` and the frameworks; `__LOADER_INJECT__` takes the versioned document of the same name |
+| `backup_policies` | `...` | Backup policies with their target OUs, added to those of `base.tfvars` and the frameworks; `__LOADER_INJECT__` takes the versioned document of the same name |
+| `service_access_principals` | `...` | Delegated administrators: each entry registers `account_id` as administrator of `service_principal`; `sso.*` entries are dropped in aws-eusc |
 | `additional_aws_service_access_principals` | `[]` | Plain service principals appended to the trusted-access list that `stacks/management/organization` derives from the module toggles (`aws_service_access_principals` of the organization module). Merged by concatenation across `base.tfvars`, `env/common.hcl` and the enabled frameworks, deduplicated against the toggle list; `sso.*` entries are dropped in aws-eusc. Adopts an existing organization's full trusted-access list and fills a toggle combination that would otherwise render an empty list, which the module refuses |
 | `additional_enabled_policy_types` | `[]` | Organizations policy types kept enabled on the root in addition to the ones the policy lists derive (for example `AISERVICES_OPT_OUT_POLICY`). The organization resource owns the complete list, so an adopted organization loses every enabled type nothing names; read today's types with `aws organizations list-roots`. Passed by `stacks/management/organization` to the module input of the same name |
-| `accounts` | `...` |  |
-| `close_on_deletion` | `false` |  |
-| `enable_sso_assignment` | `false` |  |
-| `sso_permission_set_name` | `"AWSAdministratorAccess"` |  |
-| `sso_principal_type` | `"GROUP"` |  |
-| `sso_principal_name` | `""` |  |
-| `control_tower_version` | `"4.0"` |  |
-| `enabled_regions` | `["eu-central-1"]` |  |
+| `accounts` | `...` | Member accounts to create, each with `name`, `email`, OU and tags; see the [accounts](#accounts) module below |
+| `close_on_deletion` | `false` | Closes the AWS account when its entry is removed; `false` only removes it from the organization |
+| `enable_sso_assignment` | `false` | Assigns the permission set below to each created account and enables IAM Identity Center in the Control Tower landing zone |
+| `sso_permission_set_name` | `"AWSAdministratorAccess"` | IAM Identity Center permission set assigned to each created account when `enable_sso_assignment` is on |
+| `sso_principal_type` | `"GROUP"` | Kind of principal that receives the permission set: `GROUP` or `USER` |
+| `sso_principal_name` | `""` | Display name of the Identity Center group, or user name of the user, that receives the permission set |
+| `control_tower_version` | `"4.0"` | Control Tower landing zone version; the module builds the 4.x manifest only |
+| `enabled_regions` | `["eu-central-1"]` | Regions under Control Tower governance |
 | `opt_in_regions` | `[]` | Optional: opt-in regions to enable (e.g., ["af-south-1", "ap-east-1"]) |
 | `auto_enroll_ous` | `[]` | List of OU names to register for CT governance (advisory check block) |
-| `control_tower_controls` | `...` |  |
-| `log_retention_days` | `365` |  |
+| `control_tower_controls` | `...` | Control Tower controls to enable on the listed OUs, by partition-neutral identifier with optional parameters; see [control-tower](#control-tower) below |
+| `log_retention_days` | `365` | Lifecycle retention of the central log bucket in days; merged with `max()` over `base.tfvars` and the frameworks, and the floor for Control Tower log retention |
 | `cloudwatch_log_group_retention` | `365` | Set in `configurations/base/base.tfvars`, not in `env/common.hcl`. The loader merges this value with `max()` across base, `env/common.hcl` and the enabled frameworks, so a lower value never wins — to shorten retention, lower it in `base.tfvars` |
-| `kms_key_administrators` | `[]` |  |
-| `force_destroy` | `false` |  |
-| `enable_guardduty` | `true` |  |
-| `enable_security_hub` | `true` |  |
+| `kms_key_administrators` | `[]` | IAM ARNs allowed to administer the KMS keys of the log buckets and the CUR bucket |
+| `force_destroy` | `false` | Lets Terraform delete the log and CUR buckets while they hold objects; for test environments only |
+| `enable_guardduty` | `true` | GuardDuty organization-wide threat detection; a value set here wins over `base.tfvars` and the frameworks, including `false` |
+| `enable_security_hub` | `true` | Security Hub organization-wide posture management; a value set here wins over `base.tfvars` and the frameworks, including `false` |
 | `enable_macie` | `false` | Merged by staged precedence (Task 4.2): a value set in `env/common.hcl` wins, including `false` — `enable_macie = false` there disables Macie on the next apply even though `base.tfvars` ships `true`; unset (or `null`) falls back to the OR over `base.tfvars` and the enabled frameworks. The merged value drives trusted service access as well as delegated-admin registration |
-| `enable_access_analyzer` | `true` |  |
-| `security_hub_standards` | `...` |  |
-| `password_policy` | `...` |  |
-| `enable_scp_revert_detection` | `true` |  |
-| `scp_revert_notification_emails` | `["security-notifications@example.com"]` |  |
-| `enable_central_root_management` | `true` |  |
-| `roles` | `...` |  |
-| `saml_providers` | `[]` |  |
-| `customer_managed_policies` | `...` |  |
-| `managed_rules` | `[]` |  |
-| `custom_rules` | `[]` |  |
-| `conformance_packs` | `[]` |  |
-| `remediation_configs` | `[]` |  |
-| `vpcs` | `[]` |  |
-| `transit_gateway` | `...` |  |
-| `route53_zones` | `[]` |  |
-| `network_firewall` | `{}` |  |
-| `ipam` | `{}` |  |
-| `prefix_lists` | `[]` |  |
+| `enable_access_analyzer` | `true` | IAM Access Analyzer at organization level; a value set here wins over `base.tfvars` and the frameworks, including `false` |
+| `security_hub_standards` | `...` | Security Hub standards by ARN suffix, merged as a union with those of `base.tfvars` and the frameworks |
+| `password_policy` | `...` | IAM account password policy; for each field the most restrictive value across `base.tfvars`, this file and the frameworks wins |
+| `enable_scp_revert_detection` | `true` | EventBridge detection of SCP changes made outside Terraform; the rule only receives events in us-east-1 |
+| `scp_revert_notification_emails` | `["security-notifications@example.com"]` | Email addresses notified when an SCP change outside Terraform is detected |
+| `enable_central_root_management` | `true` | Adds `iam.<dns_suffix>` to trusted service access for centralized root access management; a framework can switch it on as well |
+| `roles` | `...` | IAM roles with trust policy, attached policies, optional permissions boundary and instance profile; see [iam](#iam) below |
+| `saml_providers` | `[]` | SAML identity providers to create in IAM |
+| `customer_managed_policies` | `...` | Customer-managed IAM policies, added to those of `base.tfvars` and the frameworks; `__LOADER_INJECT__` takes the versioned document of the same name |
+| `managed_rules` | `[]` | AWS-managed Config rules, added to the base rule set and the frameworks' rules; see [config-rules](#config-rules) below |
+| `custom_rules` | `[]` | Lambda-based custom Config rules, added to those of `base.tfvars` and the frameworks |
+| `conformance_packs` | `[]` | Account-level conformance packs, added to those of `base.tfvars` and the frameworks |
+| `remediation_configs` | `[]` | Auto-remediations for Config rules, added to the base remediations and those of the frameworks |
+| `vpcs` | `[]` | VPC definitions with subnets, Transit Gateway attachment and flow logs; see [networking](#networking) below |
+| `transit_gateway` | `...` | Transit Gateway with Amazon side ASN and route tables; nothing is created until `enabled = true` |
+| `route53_zones` | `[]` | Private hosted zones and resolver rules for central DNS |
+| `network_firewall` | `{}` | AWS Network Firewall with policy, rule groups and logging; nothing is created until `enabled = true` |
+| `ipam` | `{}` | VPC IPAM configuration for central IP address management |
+| `prefix_lists` | `[]` | Managed prefix lists for reusable CIDR references |
 | `acm_certificates` | `[]` | Optional: ACM certificate definitions (e.g., [{ domain_name = "example.com", validation_method = "DNS" }]) |
-| `sns_email_targets` | `[]` |  |
-| `sns_lambda_targets` | `[]` |  |
-| `alert_on_severity` | `"HIGH"` |  |
-| `sns_kms_encryption` | `true` |  |
+| `sns_email_targets` | `[]` | Email addresses subscribed to the alerting SNS topics |
+| `sns_lambda_targets` | `[]` | Lambda function ARNs subscribed to the alerting SNS topics |
+| `alert_on_severity` | `"HIGH"` | Lowest GuardDuty finding severity routed to SNS: `LOW`, `MEDIUM`, `HIGH` or `CRITICAL` |
+| `sns_kms_encryption` | `true` | Encrypts the alerting SNS topics with a dedicated customer-managed KMS key; `false` leaves them without server-side encryption |
 | `eventbridge_default_bus_policy` | `"org-events-policy"` | Any non-empty name enables the default bus policy, which the monitoring module renders from its versioned template; empty string disables it |
-| `cloudwatch_log_groups` | `...` |  |
-| `securityhub_eventbridge_rules` | `...` |  |
-| `ssm_associations` | `...` |  |
-| `enable_cloudwatch_log_data_protection` | `true` |  |
-| `cloudwatch_log_data_protection_log_groups` | `["/aws/cloudtrail/tlz-org-trail"]` |  |
-| `cloudwatch_log_subscriptions` | `...` |  |
-| `enable_quarantine_scp` | `true` |  |
-| `quarantine_scp` | `...` |  |
-| `enable_budgets` | `true` |  |
-| `budget_config` | `...` |  |
-| `enable_cost_and_usage_report` | `true` |  |
-| `cur_config` | `...` |  |
+| `cloudwatch_log_groups` | `...` | CloudWatch log groups the monitoring stack creates, each with name and retention |
+| `securityhub_eventbridge_rules` | `...` | EventBridge rules that route Security Hub findings to a target; `__CW_LOG_GROUP_ARN__` names the findings log group |
+| `ssm_associations` | `...` | SSM State Manager associations created by the logging stack, such as the software inventory collection |
+| `enable_cloudwatch_log_data_protection` | `true` | Masks sensitive data such as credentials and personal data in the CloudTrail log group and the log groups listed below |
+| `cloudwatch_log_data_protection_log_groups` | `[]` | Additional log groups that get the data protection policy; the CloudTrail log group is always covered and must not be listed |
+| `cloudwatch_log_subscriptions` | `...` | CloudWatch Logs subscription filters; an entry without `destination_arn` feeds the module-managed Kinesis data stream |
+| `enable_quarantine_scp` | `true` | Creates the quarantine SCP, which denies every action except to the provisioning roles |
+| `quarantine_scp` | `...` | Quarantine SCP document (`content`, injected by `name`) and `targets`, the OUs or accounts it is attached to; empty `targets` attaches it nowhere |
+| `enable_budgets` | `true` | Deploys the budgets stack with the budget defined in `budget_config` |
+| `budget_config` | `...` | Primary AWS budget: limit, time unit, counted cost types and notification thresholds with their recipients |
+| `enable_cost_and_usage_report` | `true` | Deploys the Cost and Usage Report stack; the report is defined in us-east-1 and skipped in aws-eusc |
+| `cur_config` | `...` | Cost and Usage Report name, format, time unit, S3 prefix and lifecycle; the stack writes the report to a dedicated CUR bucket in us-east-1 |
 | `s3_replication_config` | `{}` | Optional: S3 cross-region replication (e.g., { destination_region = "eu-west-1", destination_bucket = "tlz-replica" }) |
-| `backup_vaults` | `[]` |  |
-| `ssm_parameters` | `[]` |  |
-| `service_quota_increases` | `[]` |  |
-| `enable_fms_notification_channel` | `false` |  |
-| `enable_firewall_config_bucket` | `false` |  |
-| `firewall_config_bucket_name` | `""` |  |
-| `enable_ram_sharing` | `true` |  |
-| `enable_account_warming` | `true` |  |
-| `enable_deployment_account` | `false` |  |
-| `enable_pipeline` | `false` |  |
-| `pipeline_type` | `"codepipeline"` | "codepipeline" | "ecs" | "external" |
-| `deployment_account_email` | `""` |  |
+| `backup_vaults` | `[]` | AWS Backup vaults to create; an empty list skips the backup stack |
+| `ssm_parameters` | `[]` | SSM parameters to create in the management account; an empty list skips the stack |
+| `service_quota_increases` | `[]` | Service quota increase requests by service code, quota code and desired value; an empty list skips the stack |
+| `enable_fms_notification_channel` | `false` | Sends Firewall Manager security alerts to an SNS topic through the Firewall Manager notification channel |
+| `enable_firewall_config_bucket` | `false` | Creates an S3 bucket for third-party firewall configuration and license files |
+| `firewall_config_bucket_name` | `""` | Globally unique name of the firewall configuration bucket; required when the bucket is enabled and must start with `tlz-` |
+| `enable_ram_sharing` | `true` | Shares subnets, the Transit Gateway and the DNS, IPAM and firewall resources with member accounts through AWS RAM |
+| `enable_account_warming` | `false` | Creates accounts marked `warm = true` without security and networking configuration until they are promoted |
+| `enable_deployment_account` | `false` | Keeps the S3 remote state and the account parameters in the account `deployment_account_id` of `env/accounts.hcl` and creates the deployment role in the management account |
+| `enable_pipeline` | `false` | Deploys the pipeline stack in the deployment account; needs `enable_deployment_account` and `state_backend = "s3"` |
+| `pipeline_type` | `"codepipeline"` | "codepipeline" \| "ecs" \| "external" |
 | `repository_name` | `""` | codepipeline: `owner/repo` of the connection source; ecs: CodeCommit repository name (no slash) |
-| `approval_notification_email` | `""` |  |
-| `external_ci_provider` | `"github"` | "github" | "gitlab" |
+| `approval_notification_email` | `""` | Email address that receives the pipeline's manual approval notifications |
+| `external_ci_provider` | `"github"` | "github" \| "gitlab" |
 
 ---
 
@@ -180,40 +181,41 @@ Boolean variables from `env/common.hcl.example` that enable or disable Landing Z
 
 | Variable | Default | Module | Description |
 |---|---|---|---|
-| `enable_organization` | `true` | global |  |
-| `enable_control_tower` | `false` | global |  |
-| `enable_accounts` | `true` | global |  |
-| `enable_logging` | `false` | global |  |
-| `enable_security` | `false` | global |  |
-| `enable_iam` | `false` | global |  |
+| `enable_organization` | `true` | global | Deploys the organization stack: OUs, organization policies, delegated administrators and trusted service access |
+| `enable_control_tower` | `false` | global | Deploys the Control Tower stack: landing zone, governed regions and controls |
+| `enable_accounts` | `true` | global | Deploys the accounts stack, which creates the member accounts listed in `accounts` |
+| `enable_logging` | `false` | global | Deploys the management logging stack and adds CloudTrail and Config to the organization's trusted service access |
+| `enable_security` | `false` | global | Deploys the management security stack and adds GuardDuty, Security Hub and Access Analyzer to trusted service access |
+| `enable_iam` | `false` | global | Deploys the IAM stack with the roles, customer-managed policies and SAML providers configured below |
 | `enable_config_recorder_members` | `false` | global | Deploy Config Recorders into member accounts without a dedicated recorder stack, from the management account |
-| `enable_config_rules` | `false` | global |  |
-| `enable_networking` | `false` | global |  |
-| `enable_monitoring` | `false` | global |  |
+| `enable_member_roles` | `true` | global | Create the roles and customer-managed policies whose deployment_targets name member accounts in those accounts (stacks/management/member-roles); unset counts as false |
+| `enable_config_rules` | `false` | global | Deploys the config-rules stack: managed and custom Config rules, conformance packs and remediations |
+| `enable_networking` | `false` | global | Deploys the networking stack: VPCs, Transit Gateway, DNS, Network Firewall and IPAM |
+| `enable_monitoring` | `false` | global | Deploys the monitoring stack: SNS alerting, EventBridge rules and CloudWatch log groups |
 | `enable_service_catalog` | `false` | iam | Enable Service Catalog portfolio sharing across the organization |
 | `enable_sns_forwarder` | `false` | monitoring | Enable cross-account SNS forwarder Lambda |
 | `enable_s3_object_lock` | `false` | logging | Enable S3 Object Lock (WORM) on central log bucket |
 | `enable_cloudtrail_lake` | `false` | logging | Enable CloudTrail Lake event data store for SQL querying. Closed to new customers since 2026-05-31 — enable only for an account onboarded before the cutoff |
 | `enable_vpc_flow_logs_bucket` | `false` | logging | Enable dedicated S3 bucket for VPC flow logs |
-| `enable_account_move_automation` | `false` | organization | Enable EventBridge + Lambda automation to move accounts between OUs |
+| `enable_account_move_automation` | `false` | organization | Enable EventBridge + Lambda automation to move accounts between OUs; created in us-east-1, where Organizations delivers its events |
 | `enable_control_tower_enrollment` | `false` | accounts | Enable check block guidance for CT account enrollment |
-| `enable_sso_assignment` | `false` | accounts |  |
-| `enable_guardduty` | `true` | security, security-org-config |  |
-| `enable_security_hub` | `true` | security, security-org-config |  |
-| `enable_macie` | `false` | security, security-org-config |  |
-| `enable_access_analyzer` | `true` | security |  |
-| `enable_scp_revert_detection` | `true` | organization |  |
+| `enable_sso_assignment` | `false` | accounts | Assigns the permission set below to each created account and enables IAM Identity Center in the Control Tower landing zone |
+| `enable_guardduty` | `true` | security, security-org-config | GuardDuty organization-wide threat detection; a value set here wins over `base.tfvars` and the frameworks, including `false` |
+| `enable_security_hub` | `true` | security, security-org-config | Security Hub organization-wide posture management; a value set here wins over `base.tfvars` and the frameworks, including `false` |
+| `enable_macie` | `false` | security, security-org-config | Macie sensitive data discovery, not available in aws-eusc; a value set here wins over `base.tfvars` and the frameworks, including `false` |
+| `enable_access_analyzer` | `true` | security | IAM Access Analyzer at organization level; a value set here wins over `base.tfvars` and the frameworks, including `false` |
+| `enable_scp_revert_detection` | `true` | organization | EventBridge detection of SCP changes made outside Terraform; the rule only receives events in us-east-1 |
 | `enable_central_root_management` | `true` | organization | Switches the IAM service access principal (`iam.<dns_suffix>`) in the organization stack; `modules/security` carries no toggle for it |
-| `enable_cloudwatch_log_data_protection` | `true` | logging |  |
-| `enable_quarantine_scp` | `true` | organization |  |
-| `enable_budgets` | `true` | budgets |  |
-| `enable_cost_and_usage_report` | `true` | cur |  |
-| `enable_fms_notification_channel` | `false` | security |  |
-| `enable_firewall_config_bucket` | `false` | security |  |
-| `enable_ram_sharing` | `true` | networking |  |
-| `enable_account_warming` | `true` | accounts |  |
-| `enable_deployment_account` | `false` | accounts |  |
-| `enable_pipeline` | `false` | global |  |
+| `enable_cloudwatch_log_data_protection` | `true` | logging | Masks sensitive data such as credentials and personal data in the CloudTrail log group and the log groups listed below |
+| `enable_quarantine_scp` | `true` | organization | Creates the quarantine SCP, which denies every action except to the provisioning roles |
+| `enable_budgets` | `true` | budgets | Deploys the budgets stack with the budget defined in `budget_config` |
+| `enable_cost_and_usage_report` | `true` | cur | Deploys the Cost and Usage Report stack; the report is defined in us-east-1 and skipped in aws-eusc |
+| `enable_fms_notification_channel` | `false` | security | Sends Firewall Manager security alerts to an SNS topic through the Firewall Manager notification channel |
+| `enable_firewall_config_bucket` | `false` | security | Creates an S3 bucket for third-party firewall configuration and license files |
+| `enable_ram_sharing` | `true` | networking | Shares subnets, the Transit Gateway and the DNS, IPAM and firewall resources with member accounts through AWS RAM |
+| `enable_account_warming` | `false` | accounts | Creates accounts marked `warm = true` without security and networking configuration until they are promoted |
+| `enable_deployment_account` | `false` | accounts | Keeps the S3 remote state and the account parameters in the account `deployment_account_id` of `env/accounts.hcl` and creates the deployment role in the management account |
+| `enable_pipeline` | `false` | global | Deploys the pipeline stack in the deployment account; needs `enable_deployment_account` and `state_backend = "s3"` |
 | `enable_firewall_appliances` | `false` | ec2-compute | Deploys the firewall appliance stack `stacks/management/firewall-appliances`; see [EC2 Compute](ec2-compute.md) |
 | `enable_workload_compute` | `false` | ec2-compute | Deploys the workload compute stack `stacks/workload-dev/workload-compute`; see [EC2 Compute](ec2-compute.md) |
 | `enable_directory_config` | `false` | ec2-compute | Deploys the directory configuration stack `stacks/management/directory-config`; see [Directory Config](directory-config.md) |
@@ -307,13 +309,13 @@ Boolean variables from `env/common.hcl.example` that enable or disable Landing Z
 | `managed_rules` | `list(object({...}))` | `[]` | Each managed_rules deployment_targets entry must be a 12-digit account ID, a k... (+1 further check) | List of AWS-managed Config rule definitions for organization-wide deployment. Each deployment_targets entry is an account ID, an account name from account_ids, or an OU name from ou_name_to_id. description documents what the rule evaluates. |
 | `custom_rules` | `list(object({...}))` | `[]` | Each custom_rules entry must set exactly one of lambda_function_arn or lambda...; Each custom_rules lambda_function_arn must be a valid Lambda function ARN (ar...; Each custom_rules maximum_execution_frequency must be null or one of: One_Hou... (+11 further checks) | List of custom Config rule definitions (Lambda-based). Each entry names its evaluator either by lambda_function_arn (an existing function) or by a lambda block (the module creates the function from the configuration-supplied code; requires enable_custom_rule_lambdas). Each deployment_targets entry is an account ID, an account name from account_ids, or an OU name from ou_name_to_id. The evaluation scope takes one selector form: resource types (resource_types_scope), a single resource (resource_id_scope plus exactly one resource type), or a tag (tag_key_scope with optional tag_value_scope). |
 | `enable_custom_rule_lambdas` | `bool` | `false` | — | Create the evaluator and remediation Lambda functions that custom_rules[].lambda and remediation_configs[].target_document_lambda describe. Off: every function ARN comes from outside. |
-| `conformance_packs` | `list(object({...}))` | `[]` | conformance_packs excluded_accounts is not supported: the module creates account-level conformance packs in the account it runs in, which exclude no account. | List of Conformance Pack definitions, deployed as account-level packs in the account and region the module runs in (not organization-wide). excluded_accounts must stay empty. |
+| `conformance_packs` | `list(object({...}))` | `[]` | Each conformance_packs excluded_accounts entry must be a 12-digit AWS account ID. | List of Conformance Pack definitions, deployed as organization conformance packs to the member accounts of the organization in the region the module runs in. excluded_accounts is merged with global_excluded_accounts. |
 | `remediation_configs` | `list(object({...}))` | `[]` | Each remediation_configs target_type must be SSM_DOCUMENT.; Each remediation_configs maximum_automatic_attempts must be between 1 and 25. (+11 further checks) | Optional auto-remediation configurations for Config rules. target_version pins the automation document version; target_account_name names the account (a key of account_ids) that owns the document — the module then addresses the document by its full ARN. target_document_lambda describes a remediation function the module creates from configuration-supplied code (requires enable_custom_rule_lambdas); its ARN replaces the token __REMEDIATION_LAMBDA_ARN__ in the entry's static_values. |
 | `account_ids` | `map(string)` | `{}` | — | Map of account name to account ID for deployment_targets resolution |
 | `ou_name_to_id` | `map(string)` | `{}` | Each ou_name_to_id value must be an OU ID (ou-<roots>-<suffix>) or a root ID (... | Map of OU name to OU ID for deployment_targets resolution |
 | `account_ou_ids` | `map(string)` | `{}` | Each account_ou_ids value must be an OU ID (ou-<roots>-<suffix>) or a root ID ... | Map of account name to the ID of the organizational unit the account is placed in. Required to resolve OU names in deployment_targets to the accounts they contain. |
 | `management_only_rules` | `list(object({...}))` | `[]` | Each management_only_rules name must be 1-128 characters of letters, digits, ... (+3 further checks) | List of Config rules deployed only to the Management account (not org-wide). These use aws_config_config_rule instead of aws_config_organization_managed_rule. description documents what the rule evaluates; tags are assigned to the rule resource. |
-| `global_excluded_accounts` | `list(string)` | `[]` | Each entry in global_excluded_accounts must be a 12-digit AWS account ID. | Account IDs excluded from ALL org Config rules (accounts without Config Recorder) |
+| `global_excluded_accounts` | `list(string)` | `[]` | Each entry in global_excluded_accounts must be a 12-digit AWS account ID. | Account IDs excluded from ALL org Config rules and organization conformance packs (accounts without Config Recorder) |
 | `config_lambda_log_retention_days` | `number` | `365` | config_lambda_log_retention_days must be one of the CloudWatch retention values: 0 (never expire), 1, 3, 5, 7, ... | Retention of the execution log group each created evaluator and remediation Lambda owns, /aws/lambda/<function name> (0 = never expire). One value for the whole set. Without the declaration Lambda creates each group implicitly on the first invocation — outside the state, without retention, never destroyed. |
 
 ---
@@ -347,7 +349,7 @@ Boolean variables from `env/common.hcl.example` that enable or disable Landing Z
 | Name | Type | Default | Validation | Description |
 |---|---|---|---|---|
 | `enable_cost_and_usage_report` | `bool` | `false` | — | Enable AWS Cost and Usage Report. CUR is only available in us-east-1. |
-| `cur_config` | `object({...})` | `{}` | cur_config.time_unit must be DAILY, HOURLY, or MONTHLY.; cur_config.format must be Parquet or textORcsv.; cur_config.compression must be Parquet, GZIP, or ZIP.; cur_config.report_versioning must be CREATE_NEW_REPORT or OVERWRITE_REPORT.; Every cur_config.additional_artifacts entry must be one of REDSHIFT, QUICKS...; cur_config.additional_artifacts must not contain duplicates.; cur_config.additional_artifacts with ATHENA must not name any other artifac...; cur_config.additional_artifacts with ATHENA requires format Parquet, compre... | Cost and Usage Report configuration. Reports are written to the central log bucket. |
+| `cur_config` | `object({...})` | `{}` | cur_config.time_unit must be DAILY, HOURLY, or MONTHLY.; cur_config.format must be Parquet or textORcsv.; cur_config.compression must be Parquet, GZIP, or ZIP.; cur_config.report_versioning must be CREATE_NEW_REPORT or OVERWRITE_REPORT.; Every cur_config.additional_artifacts entry must be one of REDSHIFT, QUICKS...; cur_config.additional_artifacts must not contain duplicates.; cur_config.additional_artifacts with ATHENA must not name any other artifac...; cur_config.additional_artifacts with ATHENA requires format Parquet, compre... | Cost and Usage Report configuration. Reports are written to the dedicated CUR bucket when enable_dedicated_bucket is true (the management cur stack sets it, so the bucket is in us-east-1), otherwise to s3_bucket_name. |
 | `s3_bucket_name` | `string` | — (required) | s3_bucket_name must be non-empty — an S3 bucket is required for CUR report st... | Name of the S3 bucket for CUR report storage (injected via Terragrunt dependency from the logging stack). Used as fallback when enable_dedicated_bucket is false. |
 | `s3_bucket_region` | `string` | `""` | s3_bucket_region must be empty or a valid AWS region name (e.g., us-east-1, e... | Region of the S3 bucket for CUR report storage. Required when the report is delivered to an external bucket (enable_dedicated_bucket = false); only the dedicated bucket may fall back to the provider region, which is its real location by construction. |
 | `enable_dedicated_bucket` | `bool` | `false` | — | Create a dedicated S3 bucket for CUR reports instead of using the central log bucket. |
@@ -512,6 +514,22 @@ Keys in `env/common.hcl.example` that reach this module; each stack passes its o
 
 ---
 
+### member-roles
+
+📖 [Module README](../modules/member-roles/README.md)
+
+| Name | Type | Default | Validation | Description |
+|---|---|---|---|---|
+| `account_name` | `string` | — (required) | — | Name of the member account the provider points at (a key of the accounts stack's account map). |
+| `account_id` | `string` | — (required) | account_id must be a 12-digit AWS account ID. | 12-digit ID of the member account the provider points at. |
+| `account_ou_id` | `string` | `""` | — | ID of the organizational unit the account sits in. Empty when unknown: then only the account name or ID can select it. |
+| `ou_name_to_id` | `map(string)` | `{}` | — | OU name to OU ID map of the organization; resolves an OU name in deployment_targets. |
+| `partition` | `string` | `"aws"` | partition must be aws or aws-eusc. | AWS partition of the deployment; expands partition-neutral managed policy names. |
+| `roles` | `list(object({...}))` | `[]` | Role name must contain only alphanumeric characters and +=,.@_- characters. | IAM role definitions, the same list the iam stack reads. A role is created in this account when one of its deployment_targets is the account's name, its ID or the name of its OU. customer_managed_policy_names and a permissions_boundary given by name refer to customer_managed_policies created in the same account. |
+| `customer_managed_policies` | `list(object({...}))` | `[]` | — | Customer-managed IAM policy definitions, the same list the iam stack reads, selected by the same deployment_targets rule. |
+
+---
+
 ### monitoring
 
 📖 [Module README](../modules/monitoring/README.md)
@@ -637,22 +655,20 @@ Keys in `env/common.hcl.example` that reach this module; each stack passes its o
 | `chatbot_policies` | `list(object({...}))` | `[]` | Each chatbot policy target must be either a 12-digit account ID or a valid OU... | List of Chatbot Policy definitions with name, description, content, and target OUs/accounts |
 | `additional_enabled_policy_types` | `list(string)` | `[]` | Each entry must be an Organizations policy type in upper case, such as AISERVICES_OPT_OUT_POLICY. | Policy types kept enabled on the organization root in addition to the ones the policy lists derive. The resource owns the COMPLETE list: a type an adopted organization has enabled and nothing names is disabled on apply. |
 | `opt_in_regions` | `list(string)` | `[]` | Each opt-in region must be a valid AWS region name (e.g. af-south-1, ap-east-1). | List of AWS opt-in region names to auto-enable via API (e.g. af-south-1, ap-east-1, eu-south-1, me-south-1). Empty list disables opt-in region management. |
-| `enable_quarantine_auto_detach` | `bool` | `false` | — | Enable automatic detachment of the quarantine SCP from new accounts after pipeline completion via Lambda. Requires enable_quarantine_scp = true. |
-| `quarantine_detach_pipeline_names` | `list(string)` | `["tlz-deployment-pipeline"]` | quarantine_detach_pipeline_names must name at least one pipeline, each 1-100 characters of letters, digits, '.', '@', '_' and '-' (the CodePipeline name rule). | CodePipeline names whose SUCCEEDED state triggers the quarantine-SCP detach; the rule matches only these pipelines in this account and region. The default is the name modules/pipeline gives the TLZ deployment pipeline. |
+| `enable_quarantine_auto_detach` | `bool` | `false` | — | Notify scp_revert_notification_emails when a pipeline in quarantine_detach_pipeline_names succeeds, so an operator releases the quarantine SCP from the accounts that run configured. The release is manual: nothing detaches the SCP automatically. Requires enable_quarantine_scp = true. |
+| `quarantine_detach_pipeline_names` | `list(string)` | `["tlz-deployment-pipeline"]` | quarantine_detach_pipeline_names must name at least one pipeline, each 1-100 characters of letters, digits, '.', '@', '_' and '-' (the CodePipeline name rule). | CodePipeline names whose SUCCEEDED state triggers the quarantine-SCP release notification; the rule matches only these pipelines in this account and region. The default is the name modules/pipeline gives the TLZ deployment pipeline. |
 | `quarantine_detach_topic_name` | `string` | `"tlz-quarantine-scp-detach-notification"` | quarantine_detach_topic_name must start with tlz- and be 1-256 characters of letters, digits, underscore or hyphen in total. | Name of the SNS topic that carries the quarantine-SCP detach notification (created with enable_quarantine_auto_detach). The default is the name the module has always written; dormant while the toggle is off, but SNS CreateTopic is an upsert, so an apply-test against a live account overrides this with a tlz-l4test- name to avoid adopting-then-deleting a deployed topic. The tlz- prefix keeps the topic under the organization guardrails (ProtectSNSTopics). A changed default is a destroy/create of a deployed topic. |
-| `quarantine_detach_rule_name` | `string` | `"tlz-quarantine-scp-pipeline-completion"` | quarantine_detach_rule_name must start with tlz- and be 1-64 characters of letters, digits, dot, underscore or hyphen in total. | Name of the EventBridge rule that detects CodePipeline SUCCEEDED events for the quarantine-SCP detach. Same contract as quarantine_detach_topic_name: PutRule is an upsert, the default is today's literal, both targets (SNS and Lambda) follow the name, the tlz- prefix keeps the rule under ProtectEventBridgeRules. |
-| `quarantine_auto_detach_dlq_name` | `string` | `"tlz-quarantine-auto-detach-dlq"` | quarantine_auto_detach_dlq_name must be 1-80 characters of letters, digits, underscore or hyphen. | Name of the quarantine auto-detach Lambda's SQS dead-letter queue. SQS CreateQueue is idempotent for identical attributes, so an apply-test must scope it (tlz-l4test-) like the topic; the Lambda policy's sqs:SendMessage grant follows the name. Deliberately not confined to tlz-: no organization guardrail names an SQS queue ARN. A changed default is a destroy/create of a deployed queue, messages included. |
-| `enable_account_move_automation` | `bool` | `false` | — | Enable EventBridge + Lambda automation to move accounts between OUs based on Organizations API events |
+| `quarantine_detach_rule_name` | `string` | `"tlz-quarantine-scp-pipeline-completion"` | quarantine_detach_rule_name must start with tlz- and be 1-64 characters of letters, digits, dot, underscore or hyphen in total. | Name of the EventBridge rule that detects CodePipeline SUCCEEDED events for the quarantine-SCP release notification. Same contract as quarantine_detach_topic_name: PutRule is an upsert, the default is today's literal, the SNS target follows the name, the tlz- prefix keeps the rule under ProtectEventBridgeRules. |
+| `enable_account_move_automation` | `bool` | `false` | — | Enable EventBridge + Lambda automation to move accounts between OUs based on Organizations API events. The rule, the function, its log group and the log group's key are created in us-east-1 (aws partition), where Organizations delivers its events, whatever region the stack runs in. |
 | `account_move_log_retention_days` | `number` | `90` | account_move_log_retention_days must be a valid CloudWatch Logs retention value. | CloudWatch log retention in days for the account move Lambda |
 | `account_move_rule_name` | `string` | `"tlz-account-move"` | account_move_rule_name must start with tlz- and be 1-64 characters of letters, digits, dot, underscore or hyphen in total. | Name of the EventBridge rule that triggers the account-move Lambda on Organizations CreateAccount / MoveAccount events (created with enable_account_move_automation). The default is today's literal; dormant while the toggle is off, but PutRule is an upsert, so an apply-test against a live account overrides this with a tlz-l4test- name. The Lambda target follows the name; the tlz- prefix keeps the rule under ProtectEventBridgeRules. The Lambda, its role and its log group keep fixed create-only names. |
-| `enable_scp_revert_detection` | `bool` | `false` | — | Enable EventBridge-based detection of SCP modifications outside Terraform |
+| `enable_scp_revert_detection` | `bool` | `false` | — | Enable EventBridge-based detection of SCP modifications outside Terraform. The rule, its topic, the topic's key and the auto-revert function are created in us-east-1 (aws partition), where Organizations delivers its events, whatever region the stack runs in. |
 | `scp_revert_notification_emails` | `list(string)` | `[]` | — | List of email addresses to notify when SCP modifications are detected |
 | `scp_revert_topic_name` | `string` | `"tlz-scp-revert-detection"` | scp_revert_topic_name must start with tlz- and be 1-256 characters of letters, digits, underscore or hyphen in total. | Name of the SNS topic that carries SCP modification notifications. The default keeps the account-wide name the module has always written (live in the management account). SNS CreateTopic is an upsert, so an apply-test against a live account overrides this with a tlz-l4test- name to avoid adopting-then-deleting the live topic; the tlz- prefix keeps the topic under the organization guardrails. A changed default is a destroy/create in production. |
 | `scp_revert_rule_name` | `string` | `"tlz-scp-modification-detection"` | scp_revert_rule_name must start with tlz- and be 1-64 characters of letters, digits, dot, underscore or hyphen in total. | Name of the EventBridge rule that detects SCP modifications. Same contract as scp_revert_topic_name: PutRule is an upsert, the default is the live name, the tlz- prefix keeps the rule under the organization guardrails. |
 | `enable_scp_auto_revert` | `bool` | `false` | — | Enable automatic revert of unauthorized SCP modifications via Lambda. Requires enable_scp_revert_detection = true. |
 | `scp_auto_revert_dlq_name` | `string` | `"tlz-scp-auto-revert-dlq"` | scp_auto_revert_dlq_name must be 1-80 characters of letters, digits, underscore or hyphen. | Name of the SCP auto-revert Lambda's SQS dead-letter queue (created with enable_scp_auto_revert). SQS CreateQueue is idempotent for identical attributes, so an apply-test against a live account must scope it (tlz-l4test-) or its teardown deletes a deployed queue with every failed revert it holds; the Lambda policy's sqs:SendMessage grant follows the name. Deliberately not confined to tlz-: no organization guardrail names an SQS queue ARN. A changed default is a destroy/create of a deployed queue, messages included. |
 | `policy_strategy_detach_log_retention_days` | `number` | `90` | policy_strategy_detach_log_retention_days must be a valid CloudWatch Logs retention value. | CloudWatch log retention in days for the policy-strategy detach Lambda's own execution log group /aws/lambda/tlz-policy-strategy-detach (0 = never expire). |
-| `quarantine_auto_detach_log_retention_days` | `number` | `365` | quarantine_auto_detach_log_retention_days must be a valid CloudWatch Logs retention value. | CloudWatch log retention in days for the quarantine auto-detach Lambda's own execution log group /aws/lambda/tlz-quarantine-auto-detach (0 = never expire). |
 | `scp_auto_revert_log_retention_days` | `number` | `365` | scp_auto_revert_log_retention_days must be a valid CloudWatch Logs retention value. | CloudWatch log retention in days for the SCP auto-revert Lambda's own execution log group /aws/lambda/tlz-scp-auto-revert (0 = never expire). |
 
 ---

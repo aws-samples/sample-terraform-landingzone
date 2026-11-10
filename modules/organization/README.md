@@ -27,19 +27,17 @@ Manages Organizational Units (OUs), Service Control Policies (SCPs), Tag Policie
 | `chatbot_policies` | Chatbot policies with their target OUs and accounts | `list(object)` | `[]` | no |
 | `additional_enabled_policy_types` | Policy types to keep enabled in addition to the ones the policy lists above derive, for example `AISERVICES_OPT_OUT_POLICY`. The organization resource owns the complete list of enabled policy types, so a type an adopted organization has enabled and nothing here names is disabled on apply (read today's types with `aws organizations list-roots`) | `list(string)` | `[]` | no |
 | `opt_in_regions` | Opt-in regions to enable organization-wide, for example `eu-south-1`. An empty list leaves region opt-in untouched | `list(string)` | `[]` | no |
-| `enable_quarantine_auto_detach` | Detach the quarantine SCP automatically once account provisioning has finished. Requires `enable_quarantine_scp` | `bool` | `false` | no |
-| `quarantine_detach_pipeline_names` | CodePipeline names whose `SUCCEEDED` state triggers the quarantine detach; the rule matches no other pipeline. The rule sees pipelines of this account and region only | `list(string)` | `["tlz-deployment-pipeline"]` | no |
+| `enable_quarantine_auto_detach` | Notify `scp_revert_notification_emails` when a named pipeline succeeds, so an operator releases the quarantine SCP from the accounts that run configured. The release is manual; nothing detaches the SCP automatically, see [Quarantine release](#quarantine-release). Requires `enable_quarantine_scp` | `bool` | `false` | no |
+| `quarantine_detach_pipeline_names` | CodePipeline names whose `SUCCEEDED` state triggers the quarantine release notification; the rule matches no other pipeline. The rule sees pipelines of this account and region only | `list(string)` | `["tlz-deployment-pipeline"]` | no |
 | `quarantine_detach_topic_name` | Name of the quarantine-SCP detach notification topic (created with `enable_quarantine_auto_detach`). Same contract as `scp_revert_topic_name` (`CreateTopic` is an upsert; the default is the module's standard name, dormant while the toggle is off); must stay inside `tlz-` — see [Upsert-safe resource names](#upsert-safe-resource-names) | `string` | `"tlz-quarantine-scp-detach-notification"` | no |
 | `quarantine_detach_rule_name` | Name of the EventBridge rule that detects pipeline completion for the quarantine detach. Same contract as `scp_revert_rule_name` (`PutRule` is an upsert); must stay inside `tlz-` | `string` | `"tlz-quarantine-scp-pipeline-completion"` | no |
-| `quarantine_auto_detach_dlq_name` | Name of the quarantine auto-detach Lambda's SQS dead-letter queue. `CreateQueue` is idempotent on identical attributes, so the same apply-test contract applies; the Lambda policy's `sqs:SendMessage` grant follows the name. Not confined to `tlz-` (no guardrail names an SQS queue) — see [Upsert-safe resource names](#upsert-safe-resource-names) | `string` | `"tlz-quarantine-auto-detach-dlq"` | no |
-| `enable_account_move_automation` | Move accounts between OUs in response to Organizations API events | `bool` | `false` | no |
+| `enable_account_move_automation` | Move accounts between OUs in response to Organizations API events. The rule, the function and its log group are created in `us-east-1`, where Organizations delivers its events, whatever region the stack runs in | `bool` | `false` | no |
 | `account_move_log_retention_days` | Log retention in days for the account move automation | `number` | `90` | no |
 | `policy_strategy_detach_log_retention_days` | Retention of the policy-strategy detach Lambda's own execution log group `/aws/lambda/tlz-policy-strategy-detach` (`0` = never expire). See [Lambda execution log groups](#lambda-execution-log-groups) | `number` | `365` | no |
 | `policy_strategy_detach_log_kms_key_arn` | Optional KMS key ARN for encrypting that log group. Empty keeps the CloudWatch service default encryption; the module creates no key | `string` | `""` | no |
-| `quarantine_auto_detach_log_retention_days` | Retention of the quarantine auto-detach Lambda's own execution log group `/aws/lambda/tlz-quarantine-auto-detach` (`0` = never expire). See [Lambda execution log groups](#lambda-execution-log-groups) | `number` | `365` | no |
 | `scp_auto_revert_log_retention_days` | Retention of the SCP auto-revert Lambda's own execution log group `/aws/lambda/tlz-scp-auto-revert` (`0` = never expire). See [Lambda execution log groups](#lambda-execution-log-groups) | `number` | `365` | no |
 | `account_move_rule_name` | Name of the EventBridge rule that triggers the account-move Lambda. Same contract as `scp_revert_rule_name` (`PutRule` is an upsert; the default is the module's standard name, dormant while the toggle is off); must stay inside `tlz-` — see [Upsert-safe resource names](#upsert-safe-resource-names) | `string` | `"tlz-account-move"` | no |
-| `enable_scp_revert_detection` | Detect SCP changes that were made outside this configuration. Works in `us-east-1` only, see [SCP change detection](#scp-change-detection) | `bool` | `false` | no |
+| `enable_scp_revert_detection` | Detect SCP changes that were made outside this configuration. The detection is created in `us-east-1`, where Organizations delivers its events, whatever region the stack runs in, see [SCP change detection](#scp-change-detection) | `bool` | `false` | no |
 | `scp_revert_notification_emails` | Addresses notified when an SCP change is detected | `list(string)` | `[]` | no |
 | `scp_revert_topic_name` | Name of the SCP change notification topic. The default is the module's standard name and may already exist in a deployed management account; because `CreateTopic` is an upsert, an apply-test against a live account overrides it with a `tlz-l4test-` name so teardown cannot delete the live topic. Must stay inside `tlz-` — see [Upsert-safe resource names](#upsert-safe-resource-names) | `string` | `"tlz-scp-revert-detection"` | no |
 | `scp_revert_rule_name` | Name of the EventBridge rule that detects SCP changes. Same contract as `scp_revert_topic_name` (`PutRule` is an upsert); must stay inside `tlz-` | `string` | `"tlz-scp-modification-detection"` | no |
@@ -58,7 +56,7 @@ alongside it.
 
 Those default attachments were created by AWS, not by this configuration, so
 no attachment resource can manage them. A module-owned function (packaged
-from an inline template, like the quarantine automation) detaches them at
+from an inline template, like the SCP auto-revert function) detaches them at
 deployment time, once per policy type over the deduplicated union of all
 allow-list targets, and re-attaches them when the configuration is removed —
 a target is never left without any policy, because the invocation runs after
@@ -116,11 +114,30 @@ service_control_policies = [
 `enable_scp_revert_detection` creates an EventBridge rule for `UpdatePolicy`,
 `DeletePolicy` and `DetachPolicy` and an SNS topic for the alerts. AWS
 Organizations delivers these CloudTrail events to EventBridge in `us-east-1`
-only. Deployed in another region, the rule receives nothing, and the check
-`scp_revert_detection_region` warns at every plan. The topic, like the
-quarantine-detach topic, is encrypted with a customer-managed key of this
-module (`aws_kms_key.sns_topics`) that grants EventBridge `GenerateDataKey*`
-and `Decrypt`: EventBridge cannot publish to a topic under `alias/aws/sns`.
+only, so in the `aws` partition the rule, its targets, the topic and the
+auto-revert function with its queue and log group are created in `us-east-1`,
+whatever region the stack runs in (the resource-level `region` argument of the
+AWS provider; no second provider is needed). Other partitions keep the stack's
+region. The topic, like the quarantine-detach topic, is encrypted with a
+customer-managed key of this module (`aws_kms_key.sns_topics`) that grants
+EventBridge `GenerateDataKey*` and `Decrypt`: EventBridge cannot publish to a
+topic under `alias/aws/sns`. A key must sit in the region of what it
+encrypts, so `aws_kms_key.sns_topics` and `aws_kms_key.cloudwatch_logs` hold
+one key per region in use. The key in the stack's own region is keyed
+`"stack"`, a key in another region by that region's name; a stack in
+`us-east-1` keeps one key of each, keyed `"stack"`. See
+[Upgrading](#upgrading) for a deployment of an earlier release.
+
+## Quarantine release
+
+`enable_quarantine_auto_detach` creates an EventBridge rule for `SUCCEEDED`
+of the pipelines in `quarantine_detach_pipeline_names` and an SNS topic that
+asks the subscribed addresses to release the quarantine SCP. The release is
+manual: detach the quarantine SCP from the accounts the run configured. No
+function detaches it, because the pipeline event does not name those
+accounts, and detaching from every target would release accounts the run
+never touched. The rule sees pipelines of the management account and its
+region only.
 
 `enable_scp_auto_revert` adds a Lambda function. An `UpdatePolicy` on an SCP or
 RCP this module manages (the quarantine and pipeline SCPs included) is
@@ -145,7 +162,6 @@ function's own role and by the existing exemption patterns are not reverted.
 | `ignored_ou_ids` | OU IDs marked `ignore = true` and therefore excluded from policy attachments |
 | `chatbot_policy_ids` | Map of Chatbot policy name → policy ID |
 | `quarantine_scp_id` | ID of the Quarantine SCP (empty when disabled) |
-| `quarantine_auto_detach_lambda_arn` | ARN of the quarantine auto-detach Lambda function |
 | `scp_revert_sns_topic_arn` | ARN of the SNS topic for SCP revert notifications (empty when disabled) |
 | `scp_auto_revert_lambda_arn` | ARN of the SCP auto-revert Lambda function |
 | `account_move_lambda_arn` | ARN of the account move Lambda function (empty when disabled) |
@@ -161,7 +177,7 @@ The module creates the resource types below. They are grouped by the file that d
 | `chatbot-policies.tf` | `aws_organizations_policy`, `aws_organizations_policy_attachment` |
 | `declarative-policies.tf` | `aws_organizations_policy`, `aws_organizations_policy_attachment` |
 | `organization.tf` | `aws_organizations_organization`, `aws_organizations_organizational_unit`, `aws_account_region`, `aws_organizations_delegated_administrator` |
-| `quarantine.tf` | `aws_organizations_policy`, `aws_organizations_policy_attachment`, `aws_sns_topic`, `aws_sns_topic_policy`, `aws_sns_topic_subscription`, `aws_cloudwatch_event_rule`, `aws_cloudwatch_event_target`, `aws_iam_role`, `aws_iam_role_policy`, `aws_sqs_queue`, `aws_lambda_function`, `aws_lambda_permission` |
+| `quarantine.tf` | `aws_organizations_policy`, `aws_organizations_policy_attachment`, `aws_sns_topic`, `aws_sns_topic_policy`, `aws_sns_topic_subscription`, `aws_cloudwatch_event_rule`, `aws_cloudwatch_event_target` |
 | `policy-strategy.tf` | `aws_iam_role`, `aws_iam_role_policy`, `aws_lambda_function`, `aws_lambda_invocation` |
 | `rcps.tf` | `aws_organizations_policy`, `aws_organizations_policy_attachment` |
 | `scp-revert.tf` | `aws_sns_topic`, `aws_sns_topic_policy`, `aws_sns_topic_subscription`, `aws_cloudwatch_event_rule`, `aws_cloudwatch_event_target`, `aws_iam_role`, `aws_iam_role_policy`, `aws_sqs_queue`, `aws_lambda_function`, `aws_lambda_permission` |
@@ -187,8 +203,7 @@ stays empty while a test can scope its own resources:
 | `scp_revert_topic_name` | `tlz-scp-revert-detection` | `aws_sns_topic.scp_revert` | `enable_scp_revert_detection` | yes |
 | `scp_revert_rule_name` | `tlz-scp-modification-detection` | `aws_cloudwatch_event_rule.scp_revert` | `enable_scp_revert_detection` | yes |
 | `quarantine_detach_topic_name` | `tlz-quarantine-scp-detach-notification` | `aws_sns_topic.quarantine_detach` | `enable_quarantine_scp` and `enable_quarantine_auto_detach` | yes |
-| `quarantine_detach_rule_name` | `tlz-quarantine-scp-pipeline-completion` | `aws_cloudwatch_event_rule.quarantine_detach` (both targets follow) | `enable_quarantine_scp` and `enable_quarantine_auto_detach` | yes |
-| `quarantine_auto_detach_dlq_name` | `tlz-quarantine-auto-detach-dlq` | `aws_sqs_queue.quarantine_auto_detach_dlq` (and the Lambda policy's `sqs:SendMessage` grant) | `enable_quarantine_scp` and `enable_quarantine_auto_detach` | **no** |
+| `quarantine_detach_rule_name` | `tlz-quarantine-scp-pipeline-completion` | `aws_cloudwatch_event_rule.quarantine_detach` (target follows) | `enable_quarantine_scp` and `enable_quarantine_auto_detach` | yes |
 | `scp_auto_revert_dlq_name` | `tlz-scp-auto-revert-dlq` | `aws_sqs_queue.scp_auto_revert_dlq` (and the Lambda policy's `sqs:SendMessage` grant) | `enable_scp_revert_detection` and `enable_scp_auto_revert` | **no** |
 | `account_move_rule_name` | `tlz-account-move` | `aws_cloudwatch_event_rule.account_move` (target follows) | `enable_account_move_automation` | yes |
 
@@ -204,13 +219,13 @@ names pin the `tlz-` namespace because the organization guardrails
 deny tampering only for `arn:*:sns:*:*:tlz-*` and `arn:*:events:*:*:rule/tlz-*`,
 and a name that is a variable would otherwise leave the namespace silently —
 the validations are the only enforcement of the pin, exercised with `expect_failures` in the module's
-`terraform test`. The two SQS queue names are deliberately **not**
+`terraform test`. The SQS queue name is deliberately **not**
 pinned: no guardrail statement names an SQS queue ARN (the resource control
 policies' `sqs:*` statements are `Resource: "*"`, name-independent), so there
 is no protection for a
-validation to preserve — they carry the SQS standard-queue naming rule only
-(no dot, so no accidental `.fifo` suffix). Both DLQ grants in
-`configurations/policies/organization/*-policy.json` take the queue name as a
+validation to preserve — it carries the SQS standard-queue naming rule only
+(no dot, so no accidental `.fifo` suffix). The DLQ grant in
+`configurations/policies/organization/scp-auto-revert-policy.json` takes the queue name as a
 template parameter (`dlq_name`), because Lambda validates the
 `sqs:SendMessage` grant against `dead_letter_config` at create — a renamed
 queue with a policy still naming the literal would fail the function's
@@ -218,7 +233,7 @@ creation.
 
 **Fixed, deliberately** (create-only APIs — a collision fails loudly
 instead of adopting, so a test cannot delete a live one): the Lambda functions
-`tlz-quarantine-auto-detach`, `tlz-scp-auto-revert`, `tlz-account-move`, their
+`tlz-scp-auto-revert`, `tlz-account-move`, their
 IAM roles, and the log group `/aws/lambda/tlz-account-move`. A live apply-test
 of an enabled chain would fail on these before its first assertion, which is
 the harmless failure mode.
@@ -254,18 +269,17 @@ and no `destroy` and no test teardown removes it, in every deployment and not
 only in a test. The monitoring module declares the groups of its two
 functions the same way
 ([Lambda execution log groups](../monitoring/README.md#lambda-execution-log-groups));
-this module declares the group of each of its four automation functions:
+this module declares the group of each of its three automation functions:
 
 | Log group | Resource | Retention |
 |---|---|---|
 | `/aws/lambda/tlz-account-move` | `aws_cloudwatch_log_group.account_move` | `account_move_log_retention_days` (default `90`) |
 | `/aws/lambda/tlz-policy-strategy-detach` | `aws_cloudwatch_log_group.policy_strategy_detach` | `policy_strategy_detach_log_retention_days` (default `365`) |
-| `/aws/lambda/tlz-quarantine-auto-detach` | `aws_cloudwatch_log_group.quarantine_auto_detach` | `quarantine_auto_detach_log_retention_days` (default `365`) |
 | `/aws/lambda/tlz-scp-auto-revert` | `aws_cloudwatch_log_group.scp_auto_revert` | `scp_auto_revert_log_retention_days` (default `365`) |
 
 Each name derives from its function rather than being spelled out again, so a
 group can never disagree with the function it belongs to. Whatever can invoke a function depends on
-its group: the EventBridge targets for the quarantine and SCP-revert functions,
+its group: the EventBridge targets for the account-move and SCP-revert functions,
 and both `aws_lambda_invocation` resources for the policy-strategy function,
 which Terraform invokes synchronously during the apply.
 
@@ -281,9 +295,36 @@ stack's root module, so the address carries no `module.` prefix), then apply:
 
 ```sh
 terragrunt import 'aws_cloudwatch_log_group.policy_strategy_detach[0]' /aws/lambda/tlz-policy-strategy-detach
-terragrunt import 'aws_cloudwatch_log_group.quarantine_auto_detach[0]' /aws/lambda/tlz-quarantine-auto-detach
-terragrunt import 'aws_cloudwatch_log_group.scp_auto_revert[0]' /aws/lambda/tlz-scp-auto-revert
+terragrunt import 'aws_cloudwatch_log_group.scp_auto_revert[0]' /aws/lambda/tlz-scp-auto-revert@us-east-1
 ```
+
+## Upgrading
+
+A release before this one created each key of this module as `[0]` and ran
+the SCP change detection and the account move function in the stack's region. The next plan after the
+upgrade shows the following:
+
+- **The keys move, they are not replaced.** `moved` blocks in `kms.tf` map
+  `aws_kms_key.cloudwatch_logs[0]`, `aws_kms_alias.cloudwatch_logs[0]` and
+  `aws_kms_key.sns_topics[0]` to the instance `"stack"`. A stack in
+  `us-east-1` keeps its keys. A stack in another region keeps the key there
+  while the quarantine release notification still uses it; otherwise that
+  key is scheduled for deletion (30 days).
+- **Detection outside `us-east-1` is replaced.** The rule, its targets, the
+  topic, the auto-revert function with its queue and log group, and their
+  keys are destroyed in the stack's region and created in `us-east-1`.
+- **The account move function outside `us-east-1` is replaced.** The rule,
+  its target and permission, the function and its log group are destroyed in
+  the stack's region, with the logs in that group, and created in
+  `us-east-1` with a log group key there. A stack in `us-east-1` keeps every
+  address and plans no change for them.
+- **Email subscriptions must be confirmed again.** The topic is new, so
+  every address in `scp_revert_notification_emails` gets a new confirmation
+  message, and receives no alert until it confirms.
+- **IAM.28 shows failed in member accounts.** The Security Hub baseline no
+  longer suppresses this control. The organization analyzer does not satisfy
+  it, so it stays failed in every member account until you disable IAM.28 in
+  the Security Hub standard.
 
 ## Further Documentation
 

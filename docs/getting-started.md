@@ -104,7 +104,7 @@ locals {
 
 Leave `env/accounts.hcl` empty for now — the cross-account stacks resolve their account IDs through Terragrunt dependencies and SSM parameters.
 
-One stack does not: `stacks/management/config-rules` evaluates member accounts only when `audit_account_id` is set in `env/accounts.hcl` (or `enable_config_recorder_members = true`). With the file empty it excludes every member account from every organization Config rule, also after Pass 2 has deployed recorders there. To have the rules evaluate the member accounts, copy the Audit account ID from `(cd stacks/management/accounts && terragrunt output account_ids)` into `audit_account_id` after Pass 1.
+`stacks/management/config-rules` evaluates member accounts once the Audit account ID resolves, the same way the recorder stacks resolve it: `audit_account_id` in `env/accounts.hcl` when set, otherwise the SSM parameter `/tlz/accounts/Audit/id` that Pass 1 writes (or `enable_config_recorder_members = true`). Before the Audit account exists it excludes every member account from every organization Config rule and conformance pack. Conformance packs are organization packs: they reach the same member accounts as the rules.
 
 ## 2. Phase 1 — Foundation (Organization + Accounts)
 

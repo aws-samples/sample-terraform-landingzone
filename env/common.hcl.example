@@ -81,6 +81,7 @@ locals {
   enable_security                = false
   enable_iam                     = false
   enable_config_recorder_members = false # Deploy Config Recorders to member accounts without a dedicated recorder stack
+  enable_member_roles            = true  # Create the roles and policies whose deployment_targets name member accounts there (Backup-Role for the backup policy)
   enable_config_rules            = false
   enable_networking              = false
   enable_monitoring              = false
@@ -94,7 +95,7 @@ locals {
   # cutoff keeps working — only set this to true there.
   enable_cloudtrail_lake          = false # Enable CloudTrail Lake event data store for SQL querying (closed to new customers since 2026-05-31)
   enable_vpc_flow_logs_bucket     = false # Enable dedicated S3 bucket for VPC flow logs
-  enable_account_move_automation  = false # Enable EventBridge + Lambda automation to move accounts between OUs
+  enable_account_move_automation  = false # Enable EventBridge + Lambda automation to move accounts between OUs (created in us-east-1)
   account_move_log_retention_days = 90    # CloudWatch log retention for the account move Lambda
   enable_control_tower_enrollment = false # Enable check block guidance for CT account enrollment
 
@@ -189,7 +190,7 @@ locals {
   service_control_policies = [
     {
       name        = "base-guardrails-1"
-      description = "Protects Config Rules, Lambda, SNS Topics, CloudWatch Log Groups, Kinesis Streams, EventBridge Rules from modification by non-privileged principals."
+      description = "Protects Config Rules, Lambda, SNS Topics, CloudWatch Log Groups, Kinesis Streams, EventBridge Rules and the tag ManagedBy=TLZ from modification by non-privileged principals."
       content     = "__LOADER_INJECT__"
       targets     = ["Infrastructure", "Security", "Workloads"]
     },
@@ -585,10 +586,12 @@ locals {
   prefix_lists     = []
   acm_certificates = [] # Optional: ACM certificate definitions (e.g., [{ domain_name = "example.com", validation_method = "DNS" }])
   # Default VPC adoption (modules/networking README, "Default VPC removal"):
-  # the apply takes the default VPC and the listed zones' default subnets into
-  # state and REMOVES every rule of the default security group; it does not
-  # delete the default VPC, and turning the toggle off again does not either.
-  delete_default_vpc             = true
+  # set to true and the apply takes the default VPC and the listed zones'
+  # default subnets into state and REMOVES every rule of the default security
+  # group; it does not delete the default VPC, and turning the toggle off again
+  # does not either. Off here, so the example leaves an account's existing
+  # default security group alone until the operator chooses otherwise.
+  delete_default_vpc             = false
   default_vpc_availability_zones = ["eu-central-1a", "eu-central-1b", "eu-central-1c"]
   # Default VPC/SG cleanup (security module)
   enable_delete_default_vpc      = false
@@ -665,12 +668,17 @@ locals {
   ]
 
   # --- Quarantine SCP ---
-  # When enable_quarantine_scp is true, a quarantine SCP is available for
-  # attachment to newly created accounts. It denies all actions except for
-  # TLZ provisioning roles (tlz-*, AWSControlTowerExecution) so the
-  # provisioning pipeline can still configure the account. The SCP has no
-  # default targets — it is attached dynamically to new accounts during
-  # provisioning and removed after the provisioning pipeline completes.
+  # When enable_quarantine_scp is true, the organization stack creates the
+  # SCP TLZQuarantinePolicy and attaches it to the OUs and accounts listed in
+  # targets, and nowhere else. It denies all actions except for TLZ
+  # provisioning roles (tlz-*, AWSControlTowerExecution) so the provisioning
+  # pipeline can still configure the account. List the new accounts in
+  # targets while they are provisioned. name only selects the document the
+  # loader injects for content = "__LOADER_INJECT__"; the SCP's name is
+  # always TLZQuarantinePolicy, and description is not read. Release is
+  # manual: enable_quarantine_auto_detach only sends a notification when the
+  # pipeline succeeds; then detach the SCP from the accounts that run
+  # configured.
   enable_quarantine_scp         = true
   enable_quarantine_auto_detach = false
   quarantine_scp = {
