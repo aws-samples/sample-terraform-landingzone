@@ -41,7 +41,8 @@ This sample creates billed resources in every account and region where they are 
 
 ## Directory layout
 
-- `modules/` - the 21 Terraform modules, each with its own tests
+- `docs/` - the guides: start with [docs/README.md](docs/README.md)
+- `modules/` - the 21 Terraform modules, each with its own README and tests
 - `stacks/` - the Terragrunt units that deploy the modules per account
 - `configurations/` - the security baseline, compliance framework overlays and policy documents
 - `customizations/` - a template and an example for your own Terraform modules
