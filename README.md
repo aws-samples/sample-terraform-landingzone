@@ -27,6 +27,8 @@ cp env/accounts.hcl.example env/accounts.hcl
 
 Offline checks: `make fmt`, `make validate`, `make lint`, `make scan`, `make test`.
 
+What changed in each version: [CHANGELOG.md](CHANGELOG.md).
+
 ## Security considerations
 
 The stacks run with management-account credentials and change the whole organization. Depending on the module toggles in `env/common.hcl`, an apply creates OUs, service control and resource control policies, an organization CloudTrail with a central log bucket, delegated administrators for the security services, IAM roles in member accounts and new AWS accounts; a wrong policy can lock users or pipelines out of member accounts, so read the plan before every apply. The deployment role is administrator-equivalent in every account it reaches; restrict who can assume it. State holds sensitive values: for a shared deployment use the S3 backend from the bootstrap stack and restrict access to its bucket. Accounts are not removed by a destroy (`close_on_deletion` defaults to `false`). The compliance configurations are a starting point, not an attestation.
