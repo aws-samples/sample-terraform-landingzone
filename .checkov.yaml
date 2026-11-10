@@ -1,0 +1,339 @@
+# Checkov configuration — referenced by the `scan` target of the Makefile
+# (`checkov -d . --config-file .checkov.yaml`).
+#
+# ---------------------------------------------------------------------------
+# skip-check list
+# ---------------------------------------------------------------------------
+# Every entry below carries its justification in the comment above it; that
+# comment is the whole record.
+#
+# A skip-check entry waives its check for the WHOLE tree, so a new resource
+# that fails it is not reported either. Where a waiver covers single
+# resources, the comment names them (resource address and file); the narrow
+# form is an inline `#checkov:skip=<id>:<reason>` on each named resource, as
+# modules/accounts/main.tf does, after which the entry is removed. With
+# checkov 3.3.16, without the seven entries CKV_AWS_7, 8,
+# 19, 36, 67, 79 and 227 the scan reports 9 failed checks, all on the
+# resources named at those entries, and 42 more passed checks.
+#
+# Three kinds of entries exist:
+#
+#   (1) proven tool false positives — the flagged configuration is correct and
+#       the failure was reproduced as a scanner limitation,
+#   (2) checks that do not apply to this architecture: the design accepts the
+#       trade-off deliberately,
+#   (3) opt-in hardening — the module offers the requested control as an
+#       input, but the deliberately cost-free default cannot satisfy a static
+#       check that requires a customer-managed key or per-element value.
+#
+# Removing an entry re-arms the check; do that when the underlying reason is
+# gone (for example after a Checkov upgrade fixes a false positive).
+#
+# Note on parsing errors: a parse failure carries no check ID, so skip-check
+# cannot address one -- skip-path is the only lever. Two path exclusions below
+# carry the whole of it: the 35 stacks/**/terragrunt.hcl units (Terragrunt
+# configuration, not Terraform code, declaring no resource) and one Terraform
+# file that calls a provider-defined function. Each is justified at its entry
+# with the parser message it produces. The two remaining cases were fixed in
+# the code instead of excluded. Target state: Parsing errors: 0.
+# ---------------------------------------------------------------------------
+
+# Only Terraform code is scanned. The repository carries no container,
+# Kubernetes or CloudFormation definitions, so the remaining frameworks would
+# only cost runtime.
+framework:
+  - terraform
+
+# Paths excluded from the scan. The first four are generated or vendored
+# content, not code owned by this repository:
+#   .terraform            provider plugins and module cache
+#   .terragrunt-cache     working copies Terragrunt creates per unit
+#   .reference            local analysis material, not part of the delivery
+#   .archive              retired code kept for reference only
+# The fifth excludes the 35 Terragrunt unit files. They contain no resource, so
+# nothing is lost from the scan (stacks/ carries no .tf file at all), and the
+# HCL parser bundled with Checkov cannot read two constructs they use:
+#   - `if` as an attribute name, which is what Terragrunt's `exclude { if = … }`
+#     block is spelled with. The parser reserves `if` for the for-expression
+#     keyword and refuses it in attribute position — 34 of the 35 files:
+#       stacks/management/service-quotas/terragrunt.hcl
+#       lark.exceptions.UnexpectedToken: Unexpected token Token('IF', 'if') at line 13, column 3.
+#     Isolated to that one attribute: a file holding only
+#     `exclude { if = true, actions = ["all"] }` reproduces the error, and the
+#     same block with the `if` line removed parses.
+#   - a unary `!` operand continued by a binary operator on the next line, in
+#     the remaining file:
+#       stacks/deployment/bootstrap/terragrunt.hcl
+#       lark.exceptions.UnexpectedCharacters: No terminal matches '|' in the current parser context, at line 20 col 5
+# Both are valid Terragrunt/HCL2 that terragrunt itself reads; the
+# limitation is the scanner's.
+#
+# The sixth excludes one single Terraform file,
+# modules/config-rules/tests/overlay-loader/main.tf. Unlike the two expressions
+# that were rewritten for the same scan, this one cannot
+# be rewritten without changing what it does. Line 78 calls a PROVIDER-DEFINED
+# function, the only way to read a .tfvars overlay from HCL:
+#   overlay = provider::terraform::decode_tfvars(…)
+# The `provider::<name>::<fn>` namespace separator (Terraform 1.8+) is unknown
+# to the bundled grammar, in every position -- as a local and as an output value
+# alike:
+#   lark.exceptions.UnexpectedToken: Unexpected token Token('COLON', ':') at line 78, column 21.
+# No core function decodes tfvars, so there is no equivalent spelling; dropping
+# the call would remove the loader's whole purpose. Nothing is lost by the
+# exclusion either way: the file declares no resource, data or module block, so
+# a scan of it reports `Passed checks: 0` even when it parses.
+#
+# The values are regular expressions, searched against the ABSOLUTE file path
+# (checkov joins the walked root onto each entry before matching), which is why
+# the last two entries lead with a slash instead of an "^" anchor.
+skip-path:
+  - "\\.terraform/"
+  - "\\.terragrunt-cache/"
+  - "^\\.reference/"
+  - "^\\.archive/"
+  - "/stacks/.*/terragrunt\\.hcl$"
+  - "/modules/config-rules/tests/overlay-loader/main\\.tf$"
+
+# Intentionally waived checks; one entry per line, each with its reason.
+skip-check:
+  # --- (1) proven tool false positives ---
+  # KMS key policies require Resource "*" (= this key) and the account-root
+  # statement; the scanner reads the document as an identity policy.
+  - CKV_AWS_109
+  # Same key-policy document, same misreading: write access without
+  # constraint is the mandatory key-policy shape.
+  - CKV_AWS_111
+  # Same key-policy document: Resource "*" is the only valid form.
+  - CKV_AWS_356
+  # aws_config_configuration_recorder_status.this[0] already carries
+  # is_enabled = true and references a recorder whose recording_group already
+  # carries all_supported = true — the exact shape the check's own published
+  # passing example uses. Isolated the difference: the identical two-resource
+  # pair with count = 1 / [0] indexing (this module's shape) fails, the same
+  # pair unconditional (no count) passes — reproduced against a bare checkov
+  # invocation outside this repo, no other variable involved. Indexed
+  # cross-resource reference breaks the graph check, same class as the
+  # graph-edge failures waived below.
+  - CKV2_AWS_45
+  # Reproduced scanner defect: a lifecycle rule with a filter block is not
+  # evaluated although abort_incomplete_multipart_upload is present.
+  - CKV_AWS_300
+  # enable_log_file_validation comes per trail from the user object whose
+  # optional() default is true; per-element values are unresolvable for the
+  # scanner. Resource: aws_cloudtrail.account_trails
+  # (modules/logging/cloudtrail.tf); the organization trail sets the literal.
+  - CKV_AWS_36
+  # enable_key_rotation comes per key from the user object whose optional()
+  # default is true; per-element values are unresolvable.
+  # Resource: aws_kms_key.custom (modules/security/kms.tf).
+  - CKV_AWS_7
+  # Gateway LB listeners have no protocol attribute (GENEVE, layer 3/4), and
+  # the generic listener protocol is per-element user configuration
+  #.
+  - CKV_AWS_2
+  # Graph check loses the encryption edge at the indexed reference
+  # aws_s3_bucket.audit_manager_reports[0].id although the bucket carries an
+  # aws_s3_bucket_server_side_encryption_configuration in the same file.
+  # Resource: aws_s3_bucket.audit_manager_reports (modules/security/audit-manager.tf).
+  - CKV_AWS_19
+  # NACLs are bound to subnets via aws_network_acl_association (subnets.tf);
+  # the graph edge breaks at the interpolated for_each key
+  # aws_network_acl.this[each.value.nacl_key].
+  - CKV2_AWS_1
+  # Security groups are attached to load balancers and interface endpoints
+  # (endpoints.tf); the graph edges break at interpolated for_each keys.
+  - CKV2_AWS_5
+  # The instance profile comes from the referenced launch template (dynamic
+  # iam_instance_profile, opt-in per entry); the check does not follow the
+  # launch_template reference of aws_instance.
+  - CKV2_AWS_41
+
+  # --- (2) checks that do not apply to this architecture ---
+  # IAM users are a deliberate, default-empty break-glass feature for
+  # environments without SSO reach.
+  - CKV_AWS_273
+  # Direct policy attachment is part of that break-glass surface.
+  - CKV_AWS_40
+  # aws_route53_zone.central_endpoint (endpoints.tf) and aws_route53_zone.private
+  # (route53.tf) both carry a vpc {} block — both are private hosted zones with
+  # no public delegation. DNSSEC signing needs a chain of trust to a parent
+  # zone at a public registrar (docs.aws.amazon.com/Route53, "Enabling DNSSEC
+  # signing and establishing a chain of trust"), which a private zone has no
+  # path to. The check's own title even names its scope: "Ensure DNSSEC signing
+  # is enabled for Amazon Route 53 PUBLIC hosted zones" — this project has none.
+  - CKV2_AWS_38
+  # Same two private zones (central_endpoint, private), same reason: Route 53
+  # query logging is a public-zone feature (the AWS Developer Guide page is
+  # titled "Public DNS query logging"; logs are delivered per Route 53 edge
+  # location, which only serves public authoritative resolution). Private-zone
+  # query visibility is a different mechanism entirely — Resolver query
+  # logging (aws_route53_resolver_query_log_config) — not this check's subject.
+  - CKV2_AWS_39
+  # Per-logfile SNS notification is not required for the optional account
+  # trails; central evaluation runs on the log bucket.
+  - CKV_AWS_252
+  # Single-step guard functions; diagnosis runs over CloudWatch Logs and the
+  # dead-letter queue, X-Ray adds per-trace cost without insight.
+  - CKV_AWS_50
+  # Control-plane Lambdas in the management account speak only AWS APIs; the
+  # account deliberately carries no VPC infrastructure.
+  - CKV_AWS_117
+  # Inline function code from this repository, integrity via source_code_hash;
+  # a signing toolchain would break the no-shell deployment rule.
+  - CKV_AWS_272
+  # The only environment value is a policy ID, not a secret; the service key
+  # suffices.
+  - CKV_AWS_173
+  # A DLQ serves asynchronous invocation. The Firehose record processor is
+  # invoked synchronously by the delivery stream, which retries and routes
+  # failed batches to the pipeline's error prefix — a DLQ on this function
+  # could never receive an event. The asynchronous control-plane functions
+  # (quarantine auto-detach, log-group onboarding) carry real DLQs by design
+  # and are guarded by their tests.
+  - CKV_AWS_116
+  # Firewall rules and policy carry no secret content; AWS-owned encryption
+  # suffices for the network firewall.
+  - CKV_AWS_345
+  # Same decision for the firewall policy resource.
+  - CKV_AWS_346
+  # Pipeline artifacts are plans in the management account; the AWS-managed
+  # S3 key suffices for CodeBuild.
+  - CKV_AWS_147
+  # Same decision for the CodePipeline artifact store.
+  - CKV_AWS_219
+  # The buckets are state, log, report and config stores without an event
+  # consumer; evaluation runs centrally (CloudTrail data events, Config,
+  # Security Hub). A per-bucket SNS/SQS/Lambda notification target would add
+  # infrastructure nothing reads — the repository deliberately carries no
+  # aws_s3_bucket_notification resource.
+  - CKV2_AWS_62
+  # S3 server access logging delivers only to SSE-S3 targets (AWS user guide,
+  # "Enabling Amazon S3 server access logging"); every candidate target bucket
+  # here is deliberately SSE-KMS with a customer-managed key, and the sources
+  # outside the log-archive account have no same-account, same-region target
+  # at all (bootstrap precedes the logging module by design). Object-level
+  # evaluation runs via the org trail instead.
+  - CKV_AWS_18
+  # Console login profiles are the purpose of the deliberate, default-empty
+  # break-glass surface (permissions boundary, password reset on first login,
+  # usage alarm in modules/monitoring); regular IAM users opt out of the
+  # console via disable_console_access. Same surface as CKV_AWS_273/40
+  #.
+  - CKV2_AWS_22
+  # Secrets Manager entries are initial passwords (the forced reset on first
+  # login obsoletes the stored value) or the Managed AD admin password;
+  # automatic rotation would need a custom rotation Lambda and is an
+  # architecture decision outside the no-shell deployment rule.
+  - CKV2_AWS_57
+  # The org-wide GuardDuty configuration (auto-enable) lives in the audit
+  # account module security-org-config per the delegated-admin design
+  # (aws_guardduty_organization_configuration); the check looks for it in the
+  # detector's module.
+  - CKV2_AWS_3
+  # SSM parameters carry identifiers and example values, no secrets (account
+  # metadata for the documented reader path without --with-decryption,
+  # docs/operations.md; template examples). In the ssm-parameters module the
+  # type is a per-element user value, SecureString is already available as
+  # opt-in.
+  - CKV2_AWS_34
+
+  # --- (3) opt-in hardening the static default cannot prove ---
+  # LB access logs are wired per deployment (management stack targets the
+  # central ELB log bucket); per-element values are unresolvable.
+  - CKV_AWS_91
+  # acceptance_required is a per-GWLB attribute; the default false keeps
+  # automated spoke onboarding working.
+  - CKV_AWS_123
+  # auto_accept_shared_attachments is configurable with documented tradeoff;
+  # the default "enable" keeps automated spoke onboarding working; the check
+  # also crashes on the variable reference instead of evaluating it.
+  - CKV_AWS_331
+  # Cross-zone is enabled on the central gateway LB; for user-defined network
+  # LBs it stays a per-deployment cost decision.
+  - CKV_AWS_152
+  # Deletion protection on the gateway LB comes per entry from the user object
+  # whose optional() default is true — the value the module wrote as a literal
+  # before; per-element values are unresolvable for the scanner. The default
+  # and the reader are guarded by the HCL test and the property test
+  #.
+  - CKV_AWS_150
+  # Same for the network firewall: delete_protection comes from the variable
+  # (module firewall) and per entry from network_firewall.firewalls, both with
+  # optional() default true, so the scanner sees a reference instead of the
+  # literal.
+  - CKV_AWS_344
+  # is_multi_region_trail comes from cloudtrail_org_trail_settings (org trail)
+  # and per entry from cloudtrail_account_trails (account trails), both with
+  # optional() default true — the value the module wrote as a literal before;
+  # the scanner sees a reference instead of the literal. The defaults and the
+  # readers are guarded by the HCL regression runs and the property tests
+  #. Resources: aws_cloudtrail.org_trail and
+  # aws_cloudtrail.account_trails (modules/logging/cloudtrail.tf).
+  - CKV_AWS_67
+  # is_enabled comes per key from the user object whose optional() default is
+  # true — the provider default the resource relied on before; per-element
+  # values are unresolvable for the scanner. The default and the reader are
+  # guarded by the HCL regression run and the property test.
+  # Resource: aws_kms_key.custom (modules/security/kms.tf).
+  - CKV_AWS_227
+  # Stack event notifications come per entry from notification_arns of
+  # cloudformation_stacks (customizations/cloudformation); the deliberately
+  # empty default of the user-defined stacks cannot satisfy a static check
+  # that requires an SNS topic per stack.
+  - CKV_AWS_124
+  # http_tokens comes per launch-template entry from the user object whose
+  # optional() default is "required" (IMDSv2); per-element values are
+  # unresolvable for the scanner, and the single instances of ec2-compute
+  # source their metadata options from the referenced launch template, which
+  # the scanner cannot follow. Default and reader are guarded by the HCL test
+  # and the property test. Resources:
+  # aws_launch_template.this and aws_instance.this (modules/ec2-compute/main.tf).
+  - CKV_AWS_79
+  # detailed_monitoring comes per entry (launch template and instance) from
+  # the user object; monitoring is a per-deployment cost decision, and the
+  # per-element value is unresolvable for the scanner.
+  - CKV_AWS_126
+  # ebs_optimized comes per launch-template entry with a null default that
+  # keeps the instance-type default of the service; the single instances of
+  # ec2-compute inherit it from the referenced launch template, which the
+  # scanner cannot follow.
+  - CKV_AWS_135
+  # Block devices of the ec2-compute instances come from the referenced
+  # launch template, whose per-entry ebs.encrypted default is true; the
+  # scanner cannot follow the launch-template reference. Default and reader
+  # are guarded by the HCL test. Resource:
+  # aws_instance.this (modules/ec2-compute/main.tf).
+  - CKV_AWS_8
+  # Cross-region replication is offered for the central log bucket
+  # (s3_replication_config, modules/logging/s3-replication.tf) and is a
+  # per-deployment cost decision; the cost-free default keeps replication
+  # off, which a static check cannot satisfy. The check also flags the
+  # replication destination bucket itself.
+  - CKV_AWS_144
+  # audit_manager_bucket_kms_key_arn and firewall_config_bucket_kms_key_arn
+  # offer the customer-managed key as an input; the cost-free default uses the
+  # AWS-managed S3 key. For the pipeline artifact bucket the same reasoning
+  # as CKV_AWS_147/CKV_AWS_219 applies: artifacts are plans in the
+  # management account, the AWS-managed key suffices.
+  - CKV_AWS_145
+  # The CloudWatch Logs integration of the org trail is opt-in via
+  # cloudwatch_log_group_retention (default null); central evaluation runs on
+  # the log bucket, same logic as the SNS waiver CKV_AWS_252 above.
+  - CKV2_AWS_10
+  # ssl_policy comes per listener entry from the user configuration (optional;
+  # only HTTPS/TLS listeners carry one); per-element values are unresolvable
+  # for the scanner.
+  - CKV_AWS_103
+  # A WAFv2 web ACL plus association is a per-deployment cost and architecture
+  # decision; the networking module creates no WAF, and network LB entries
+  # could not carry one anyway.
+  - CKV2_AWS_28
+
+# Report format: one line per finding, no ASCII art, so the output stays
+# readable in CI logs and in the `make all` transcript.
+compact: true
+quiet: true
+
+# A failed check must fail the target. Stated explicitly so
+# that a future change to Checkov's defaults cannot silence the scan.
+soft-fail: false

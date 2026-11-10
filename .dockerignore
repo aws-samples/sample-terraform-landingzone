@@ -1,0 +1,59 @@
+# Build context for tools/local-test/Containerfile.
+#
+# WHY THIS FILE EXISTS, measured rather than assumed: without it the build
+# transferred an 11 GB context. Build contexts do NOT read .gitignore, so every
+# `.terraform/` provider directory in the working tree was sent to the daemon
+# (23 of them, 18 GB on the host where this was measured) and landed in the two
+# COPY layers of the provider-mirror step. The image is meant to be a small,
+# reproducible offline check path; an 11 GB context defeats that.
+#
+# WHY THE DOCKER NAME for a file next to a Containerfile: Docker reads only
+# `.dockerignore`, while Podman reads `.containerignore` AND falls back to
+# `.dockerignore`. One file under this name therefore covers both engines that
+# run.sh supports; a `.containerignore` would be silently ignored by Docker,
+# which is the engine most likely to be used here. (BuildKit first looks for
+# `tools/local-test/Containerfile.dockerignore` and falls back to this file at
+# the context root.)
+#
+# It is an ALLOWLIST, not a list of exclusions, and that is deliberate. The
+# Containerfile copies exactly five things (Containerfile:79, 93, 94, 114, 127):
+#
+#   COPY tools/local-test/requirements.txt -> pip install at build time
+#   COPY modules                        -> provider mirror (needs the lock files)
+#   COPY customizations                 -> provider mirror
+#   COPY .tflint.hcl                    -> tflint --init at build time
+#   COPY tools/local-test/entrypoint.sh -> the run-stage entrypoint
+#
+# With an allowlist, a COPY added later for a path not listed here FAILS the
+# build with a missing source instead of silently shipping whatever else is in
+# the tree — including the gitignored operator files under env/, which carry
+# real account identifiers and must never enter an image layer. `env/` reaches
+# the container at RUN time through the mount in run.sh, which is where it
+# belongs. Failing loudly is the same choice the mirror step makes when a
+# single module cannot mirror.
+#
+# That property proved itself immediately: the first build with this file
+# stopped on `requirements.txt`, which the author of this list (the
+# orchestrator) had missed when reading the COPY lines. A denylist would have
+# built an image quietly missing nothing — and shipped 11 GB of context.
+
+# Exclude everything, then re-admit only what the build copies.
+*
+
+!modules
+!customizations
+!.tflint.hcl
+!tools/local-test/entrypoint.sh
+!tools/local-test/requirements.txt
+
+# ...but never the provider directories inside the re-admitted trees. This is
+# the 18 GB, and it sits UNDER modules/, so the re-inclusion above would
+# otherwise pull it straight back in. The tracked .terraform.lock.hcl files are
+# deliberately NOT excluded: `terraform providers mirror` reads them to pick the
+# exact version each module pins.
+modules/**/.terraform
+customizations/**/.terraform
+
+# Test staging directories the live-test runner creates inside module trees.
+modules/**/.livetest
+customizations/**/.livetest

@@ -1,0 +1,49 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowReplicationWrite",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "${replication_role_arn}"
+      },
+      "Action": [
+        "s3:ReplicateObject",
+        "s3:ReplicateDelete",
+        "s3:ReplicateTags",
+        "s3:ObjectOwnerOverrideToBucketOwner"
+      ],
+      "Resource": "${bucket_arn}/*"
+    },
+    {
+      "Sid": "AllowReplicationBucketVersioning",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "${replication_role_arn}"
+      },
+      "Action": [
+        "s3:List*",
+        "s3:GetBucketVersioning",
+        "s3:PutBucketVersioning"
+      ],
+      "Resource": "${bucket_arn}"
+    },
+    {
+      "Sid": "DenyUnencryptedTransport",
+      "Effect": "Deny",
+      "Principal": {
+        "AWS": "*"
+      },
+      "Action": "s3:*",
+      "Resource": [
+        "${bucket_arn}",
+        "${bucket_arn}/*"
+      ],
+      "Condition": {
+        "Bool": {
+          "aws:SecureTransport": "false"
+        }
+      }
+    }
+  ]
+}

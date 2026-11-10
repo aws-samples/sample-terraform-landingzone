@@ -1,0 +1,137 @@
+# Offline test container for the Terraform Landing Zone.
+#
+# Runs the offline check chain (make fmt / validate / lint / scan / test)
+# with pinned tool versions, without reaching AWS and without credentials.
+# It is the offline mirror of the check chain — never a substitute for the
+# live suite under tests/live/.
+#
+# Pinned toolchain (matches the versions the offline suite is validated
+# against):
+#   Terraform  1.16.1
+#   Terragrunt 1.1.4
+#   TFLint     0.64.0
+#   Python     3.12 + pytest / hypothesis / checkov (see requirements.txt)
+#
+# Build (from the repository root):
+#   docker build -f tools/local-test/Containerfile -t tlz-offline-test .
+# Run:
+#   tools/local-test/run.sh
+#
+# Docker on native Linux is the primary runtime. Finch works with the same
+# image and the same run wrapper; on Finch, prefer a native-architecture VM
+# (linux/arm64 on Graviton, linux/amd64 on x86) so the tool downloads below
+# resolve to the host architecture without emulation. That is the only
+# documented divergence between the two runtimes — the image, the layers, and
+# the check chain are identical.
+#
+# Why the image carries the providers and the tflint ruleset:
+#   run.sh starts the container with --network none. Two steps of `make all`
+#   fetch at run time when nothing is cached: `terraform init` (registry
+#   .terraform.io, via `make init`) and `tflint --init` (api.github.com, via
+#   `make lint`). Both therefore fail in a fresh checkout unless the image
+#   already holds what they would download. The build stage below fetches
+#   them once, with network, at the exact versions the tracked lock files and
+#   .tflint.hcl pin; the run stage reads them from the image through a
+#   filesystem mirror (TF_CLI_CONFIG_FILE) and TFLINT_PLUGIN_DIR. The provider
+#   versions are the ones the lock files name (`terraform providers mirror`
+#   selects the locked version), so a lock-file bump is picked up by the next
+#   image build without touching this file.
+
+FROM python:3.12-slim
+
+ARG TERRAFORM_VERSION=1.16.1
+ARG TERRAGRUNT_VERSION=1.1.4
+ARG TFLINT_VERSION=0.64.0
+
+# TARGETARCH is set by the builder (amd64 / arm64); the Terraform release
+# archives use the same names, so no translation is needed.
+ARG TARGETARCH
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates curl unzip make git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Terraform
+RUN curl -fsSL \
+      "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_${TARGETARCH}.zip" \
+      -o /tmp/terraform.zip \
+    && unzip /tmp/terraform.zip -d /usr/local/bin \
+    && rm /tmp/terraform.zip \
+    && terraform version
+
+# Terragrunt
+RUN curl -fsSL \
+      "https://github.com/gruntwork-io/terragrunt/releases/download/v${TERRAGRUNT_VERSION}/terragrunt_linux_${TARGETARCH}" \
+      -o /usr/local/bin/terragrunt \
+    && chmod +x /usr/local/bin/terragrunt \
+    && terragrunt --version
+
+# TFLint
+RUN curl -fsSL \
+      "https://github.com/terraform-linters/tflint/releases/download/v${TFLINT_VERSION}/tflint_linux_${TARGETARCH}.zip" \
+      -o /tmp/tflint.zip \
+    && unzip /tmp/tflint.zip -d /usr/local/bin \
+    && rm /tmp/tflint.zip \
+    && tflint --version
+
+# Python test dependencies (pinned)
+COPY tools/local-test/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+# Provider mirror — filled at build time (with network) from the tracked lock
+# files, read at run time (without network). `terraform providers mirror`
+# selects the version each module's .terraform.lock.hcl pins and authenticates
+# the package against HashiCorp's signature. Only the module and customization
+# sources are copied in, and only for this step; the run stage mounts the real
+# working tree over /workspace. Every module directory must mirror; a single
+# failure fails the build so an unmirrored provider can never surface later as
+# a mysterious offline `init` error.
+ENV TLZ_PROVIDER_MIRROR=/opt/tlz/providers \
+    TFLINT_PLUGIN_DIR=/opt/tlz/tflint-plugins \
+    CHECKPOINT_DISABLE=1
+COPY modules /tmp/mirror-src/modules
+COPY customizations /tmp/mirror-src/customizations
+RUN set -eu; \
+    mkdir -p "${TLZ_PROVIDER_MIRROR}"; \
+    for dir in /tmp/mirror-src/modules/*/ /tmp/mirror-src/customizations/*/; do \
+      echo "=== Mirror providers: ${dir#/tmp/mirror-src/} ==="; \
+      terraform -chdir="${dir}" providers mirror \
+        -platform="linux_${TARGETARCH}" "${TLZ_PROVIDER_MIRROR}"; \
+    done; \
+    rm -rf /tmp/mirror-src; \
+    printf 'provider_installation {\n  filesystem_mirror {\n    path    = "%s"\n    include = ["registry.terraform.io/*/*"]\n  }\n}\n' \
+      "${TLZ_PROVIDER_MIRROR}" > /opt/tlz/terraformrc; \
+    find "${TLZ_PROVIDER_MIRROR}" -name '*.zip' | sort
+
+# Only now point Terraform at the mirror: the mirror step above must read from
+# the origin registry, and the file did not exist before it ran.
+ENV TF_CLI_CONFIG_FILE=/opt/tlz/terraformrc
+
+# TFLint ruleset — the pinned version from .tflint.hcl, installed at build time
+# so the run-time `tflint --init` of `make lint` finds it already present and
+# does not reach GitHub.
+COPY .tflint.hcl /tmp/tflint-src/.tflint.hcl
+RUN mkdir -p "${TFLINT_PLUGIN_DIR}" \
+    && (cd /tmp/tflint-src && tflint --init --config .tflint.hcl) \
+    && rm -rf /tmp/tflint-src \
+    && find "${TFLINT_PLUGIN_DIR}" -type f
+
+# The run stage may execute as an arbitrary (host) uid — see run.sh — so the
+# mirror, the plugin directory and the CLI config must be world-readable, and
+# nothing here may depend on writing to /root.
+RUN chmod -R a+rX /opt/tlz
+
+# Entrypoint marks the mounted workspace as a git safe.directory so the
+# tracked-file guards can run git against the host-owned mount.
+COPY tools/local-test/entrypoint.sh /usr/local/bin/tlz-entrypoint.sh
+RUN chmod +x /usr/local/bin/tlz-entrypoint.sh
+
+WORKDIR /workspace
+
+ENTRYPOINT ["/usr/local/bin/tlz-entrypoint.sh"]
+
+# The offline chain. Overridable at run time (see run.sh). No AWS is reached;
+# no credentials are mounted. `make all` runs fmt -> validate -> lint -> scan
+# -> test and stops at the first failure.
+CMD ["make", "all"]

@@ -1,0 +1,47 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowEventBridgePublish",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "events.${dns_suffix}"
+      },
+      "Action": "sns:Publish",
+      "Resource": "${sns_topic_arn}",
+      "Condition": {
+        "StringEqualsIfExists": {
+          "aws:SourceAccount": "${account_id}"
+        }
+      }
+    },
+    {
+      "Sid": "AllowCloudWatchAlarmsPublish",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "cloudwatch.${dns_suffix}"
+      },
+      "Action": "sns:Publish",
+      "Resource": "${sns_topic_arn}",
+      "Condition": {
+        "StringEqualsIfExists": {
+          "aws:SourceAccount": "${account_id}"
+        }
+      }
+    },
+    {
+      "Sid": "AllowBudgetsPublish",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "budgets.${dns_suffix}"
+      },
+      "Action": "sns:Publish",
+      "Resource": "${sns_topic_arn}",
+      "Condition": {
+        "StringEqualsIfExists": {
+          "aws:SourceAccount": "${account_id}"
+        }
+      }
+    }
+  ]
+}

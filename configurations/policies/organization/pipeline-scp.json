@@ -1,0 +1,28 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ProtectPipelineRoles",
+      "Effect": "Deny",
+      "Action": [
+        "iam:DeleteRole",
+        "iam:UpdateAssumeRolePolicy",
+        "iam:PutRolePolicy",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy"
+      ],
+      "Resource": [
+        "${arn_prefix}:iam::*:role/${deployment_role_name}",
+        "${arn_prefix}:iam::*:role/${pipeline_role_name}"
+      ],
+      "Condition": {
+        "StringNotEquals": {
+          "aws:PrincipalAccount": "${management_account_id}"
+        },
+        "ArnNotLike": {
+          "aws:PrincipalArn": "${arn_prefix}:iam::*:role/AWSControlTowerExecution"
+        }
+      }
+    }
+  ]
+}

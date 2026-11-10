@@ -1,0 +1,8 @@
+{
+  "tags": {
+    "BackupPlan": {
+      "tag_key": { "@@assign": "BackupPlan" },
+      "tag_value": { "@@assign": ["Continuous", "Hourly", "Daily", "Weekly", "Monthly", "None"] }
+    }
+  }
+}

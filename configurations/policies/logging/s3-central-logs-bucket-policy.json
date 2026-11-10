@@ -1,0 +1,222 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AWSCloudTrailAclCheck",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "cloudtrail.${dns_suffix}"
+      },
+      "Action": "s3:GetBucketAcl",
+      "Resource": "${bucket_arn}",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceArn": "${arn_prefix}:cloudtrail:${region}:${account_id}:trail/${org_trail_name}"
+        }
+      }
+    },
+    {
+      "Sid": "AWSCloudTrailWrite",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "cloudtrail.${dns_suffix}"
+      },
+      "Action": "s3:PutObject",
+      "Resource": "${bucket_arn}/cloudtrail/AWSLogs/${organization_id}/*",
+      "Condition": {
+        "StringEquals": {
+          "s3:x-amz-acl": "bucket-owner-full-control",
+          "aws:SourceArn": "${arn_prefix}:cloudtrail:${region}:${account_id}:trail/${org_trail_name}"
+        }
+      }
+    },
+    {
+      "Sid": "AWSCloudTrailOrgWrite",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "cloudtrail.${dns_suffix}"
+      },
+      "Action": "s3:PutObject",
+      "Resource": "${bucket_arn}/cloudtrail/AWSLogs/*",
+      "Condition": {
+        "StringEquals": {
+          "s3:x-amz-acl": "bucket-owner-full-control",
+          "aws:SourceArn": "${arn_prefix}:cloudtrail:${region}:${account_id}:trail/${org_trail_name}"
+        }
+      }
+    },
+    {
+      "Sid": "AWSConfigBucketPermissionsCheck",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "config.${dns_suffix}"
+      },
+      "Action": "s3:GetBucketAcl",
+      "Resource": "${bucket_arn}"
+    },
+    {
+      "Sid": "AWSConfigBucketExistenceCheck",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "config.${dns_suffix}"
+      },
+      "Action": "s3:ListBucket",
+      "Resource": "${bucket_arn}"
+    },
+    {
+      "Sid": "AWSConfigDelivery",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "config.${dns_suffix}"
+      },
+      "Action": "s3:PutObject",
+      "Resource": "${bucket_arn}/config/AWSLogs/*",
+      "Condition": {
+        "StringEquals": {
+          "s3:x-amz-acl": "bucket-owner-full-control",
+          "aws:SourceOrgID": "${organization_id}"
+        }
+      }
+    },
+    {
+      "Sid": "AWSGuardDutyGetBucketLocation",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "guardduty.${dns_suffix}"
+      },
+      "Action": "s3:GetBucketLocation",
+      "Resource": "${bucket_arn}"
+    },
+    {
+      "Sid": "AWSGuardDutyPutObject",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "guardduty.${dns_suffix}"
+      },
+      "Action": "s3:PutObject",
+      "Resource": "${bucket_arn}/${guardduty_export_prefix}*",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceAccount": "${account_id}"
+        }
+      }
+    },
+    {
+      "Sid": "AWSMacieGetBucketLocation",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "macie.${dns_suffix}"
+      },
+      "Action": "s3:GetBucketLocation",
+      "Resource": "${bucket_arn}",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceAccount": "${account_id}"
+        }
+      }
+    },
+    {
+      "Sid": "AWSMaciePutObject",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "macie.${dns_suffix}"
+      },
+      "Action": "s3:PutObject",
+      "Resource": "${bucket_arn}/macie/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceAccount": "${account_id}"
+        }
+      }
+    },
+    {
+      "Sid": "AWSCURBucketCheck",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "billingreports.${dns_suffix}"
+      },
+      "Action": [
+        "s3:GetBucketAcl",
+        "s3:GetBucketPolicy"
+      ],
+      "Resource": "${bucket_arn}",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceAccount": "${account_id}"
+        }
+      }
+    },
+    {
+      "Sid": "AWSCURWrite",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "billingreports.${dns_suffix}"
+      },
+      "Action": "s3:PutObject",
+      "Resource": "${bucket_arn}/cur/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceAccount": "${account_id}"
+        }
+      }
+    },
+    {
+      "Sid": "AWSLogDeliveryAclCheck",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "delivery.logs.${dns_suffix}"
+      },
+      "Action": [
+        "s3:GetBucketAcl",
+        "s3:ListBucket"
+      ],
+      "Resource": "${bucket_arn}",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceAccount": "${account_id}"
+        },
+        "ArnLike": {
+          "aws:SourceArn": "${arn_prefix}:logs:${region}:${account_id}:*"
+        }
+      }
+    },
+    {
+      "Sid": "AWSLogDeliveryWrite",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "delivery.logs.${dns_suffix}"
+      },
+      "Action": "s3:PutObject",
+      "Resource": [
+        "${bucket_arn}/*AWSLogs/${account_id}/*",
+        "${bucket_arn}/*AWSLogs/aws-account-id=${account_id}/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "s3:x-amz-acl": "bucket-owner-full-control",
+          "aws:SourceAccount": "${account_id}"
+        },
+        "ArnLike": {
+          "aws:SourceArn": "${arn_prefix}:logs:${region}:${account_id}:*"
+        }
+      }
+    },
+    {
+      "Sid": "DenyUnencryptedTransport",
+      "Effect": "Deny",
+      "Principal": {
+        "AWS": "*"
+      },
+      "Action": "s3:*",
+      "Resource": [
+        "${bucket_arn}",
+        "${bucket_arn}/*"
+      ],
+      "Condition": {
+        "Bool": {
+          "aws:SecureTransport": "false"
+        }
+      }
+    }
+  ]
+}

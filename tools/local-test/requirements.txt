@@ -1,0 +1,5 @@
+# Pinned Python dependencies for the offline test container (tools/local-test).
+# Versions match the reference toolchain the offline suite is validated against.
+pytest==9.1.1
+hypothesis==6.167.1
+checkov==3.3.16

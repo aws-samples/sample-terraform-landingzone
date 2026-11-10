@@ -1,0 +1,19 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowPipelineStateEvents",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "${events_principal}"
+      },
+      "Action": "sns:Publish",
+      "Resource": "${sns_topic_arn}",
+      "Condition": {
+        "ArnEquals": {
+          "aws:SourceArn": ${rule_arns_json}
+        }
+      }
+    }
+  ]
+}

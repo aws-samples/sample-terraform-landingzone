@@ -1,0 +1,1232 @@
+# Common variables for all Terragrunt units
+# Loaded by stacks/root.hcl and each unit
+#
+# Copy this file to env/common.hcl and adjust the values. Every key the loader
+# or a stack reads is listed here, so nothing is lost when env/common.hcl is
+# taken out of version control. The values are placeholders — an
+# organization ID, an account e-mail or a profile name belongs in env/common.hcl,
+# never in this file.
+#
+# One key is deliberately missing: `external_ci_audiences`. The reason is
+# written down at the pipeline section below.
+
+locals {
+  # --- Global Configuration ---
+  region      = "eu-central-1"
+  aws_profile = "your-aws-profile"
+
+  # Partition — derived from the region prefix, one source instead of two
+  # uncoupled scalars: eusc-* regions belong to aws-eusc, every
+  # other region to aws. Not a hand-set value: changing region is the only
+  # way to switch the partition, so the two cannot drift apart.
+  partition = startswith(local.region, "eusc-") ? "aws-eusc" : "aws"
+
+  # DNS suffix of service principals, keyed by partition — the
+  # mapping stacks/management/config-recorder-members already carries. Values
+  # in this file write service principals as "<service>.${local.dns_suffix}"
+  # instead of a fixed suffix, so the file works in both partitions.
+  _dns_suffix_by_partition = {
+    aws      = "amazonaws.com"
+    aws-eusc = "amazonaws.eu"
+  }
+  dns_suffix = local._dns_suffix_by_partition[local.partition]
+
+  # State Backend: "s3" (remote, needs bootstrap) or "local" (no bootstrap needed)
+  state_backend     = "local"
+  state_bucket_name = "your-terraform-state-bucket"
+  lock_table_name   = "terraform-locks"
+
+  # Cross-account role for assume_role in member accounts. Depends on whether
+  # Control Tower actually provisioned the account (not on whether Control
+  # Tower is merely *registered* in the organization — `aws controltower
+  # list-landing-zones` can answer empty while member accounts still carry
+  # the Control-Tower-provisioned role, e.g. when the landing zone predates
+  # the current Control Tower registration or was set up by an accelerator
+  # outside it). Determine the real value per member account with a live
+  # probe against the account itself, not a landing-zone lookup:
+  #   aws sts assume-role \
+  #     --role-arn arn:aws:iam::<member-account-id>:role/<candidate-name> \
+  #     --role-session-name probe
+  # "AWSControlTowerExecution" (the module default, modules/accounts/variables.tf)
+  # is correct when that assume-role succeeds for the member accounts.
+  # "OrganizationAccountAccessRole" is correct for an organization created
+  # without an accelerator/Control Tower provisioning the accounts (AWS's
+  # own default cross-account role, created by AWS Organizations itself).
+  account_access_role_name = "AWSControlTowerExecution"
+
+  # Role that CreateAccount makes INSIDE each new member account (accounts
+  # stack, modules/accounts). Two roles, two keys:
+  # account_access_role_name above is the role the stacks ASSUME to reach
+  # accounts that already exist; this one is the role a NEW account is created
+  # with. null -- the default and the read site's own fallback -- means the
+  # same name as account_access_role_name, so a common.hcl without this key
+  # plans exactly as before. Set it when the accounts this deployment creates
+  # should carry a different role than the one the stacks assume, e.g.
+  #   created_account_role_name = "OrganizationAccountAccessRole"
+  # in an organization whose existing accounts carry the Control Tower role.
+  # Accounts that already exist are not touched by a change here: the module
+  # ignores role_name changes on them.
+  created_account_role_name = null
+
+  # --- Compliance Configuration ---
+  compliance_frameworks  = []    # e.g. ["nist-800-53"] or ["hipaa", "nist-800-53"]
+  apply_network_defaults = false # Enable advisory network configs from frameworks
+
+  # --- Module Toggles ---
+  import_organization_id         = "" # Placeholder: the real organization ID goes in env/common.hcl; empty means "create the organization instead of importing it"
+  enable_organization            = true
+  enable_control_tower           = false
+  enable_accounts                = true
+  enable_logging                 = false
+  enable_security                = false
+  enable_iam                     = false
+  enable_config_recorder_members = false # Deploy Config Recorders to member accounts without a dedicated recorder stack
+  enable_config_rules            = false
+  enable_networking              = false
+  enable_monitoring              = false
+  enable_service_catalog         = false # Enable Service Catalog portfolio sharing across the organization
+  enable_sns_forwarder           = false # Enable cross-account SNS forwarder Lambda
+  enable_s3_object_lock          = false # Enable S3 Object Lock (WORM) on central log bucket
+  # CloudTrail Lake is closed to new customers: as of May 31, 2026 AWS refuses
+  # to create an event data store for an account that never had one, so a fresh
+  # deployment with this toggle on fails the management logging stack (which
+  # also carries the org trail). An account that created its store before the
+  # cutoff keeps working — only set this to true there.
+  enable_cloudtrail_lake          = false # Enable CloudTrail Lake event data store for SQL querying (closed to new customers since 2026-05-31)
+  enable_vpc_flow_logs_bucket     = false # Enable dedicated S3 bucket for VPC flow logs
+  enable_account_move_automation  = false # Enable EventBridge + Lambda automation to move accounts between OUs
+  account_move_log_retention_days = 90    # CloudWatch log retention for the account move Lambda
+  enable_control_tower_enrollment = false # Enable check block guidance for CT account enrollment
+
+  # --- OU Deployment (stacks/management/ou-deployment) ---
+  # Deploys a capability into every account of the named OUs from a single
+  # configuration entry. Resolution per entry (configurations/ou-membership.hcl):
+  #   effective = distinct(union(OU members incl. nested OUs, accounts))
+  #               minus excluded_accounts
+  # OU membership is read from this file (accounts[].organizational_unit_name)
+  # joined with the recorded IDs in env/accounts.hcl (workload_accounts); it is
+  # resolved when Terragrunt generates the stack, not at apply time. An entry
+  # naming an OU that organizational_units does not declare aborts the run
+  # with a message naming the OU. See docs/ou-deployment.md.
+  enable_ou_deployment_backup_vaults    = false # Backup vaults in every resolved account
+  enable_ou_deployment_event_bus_policy = false # Default event bus policy in every resolved account
+  enable_ou_deployment_service_quotas   = false # Service quota requests in every resolved account
+  enable_ou_deployment_ssm_parameters   = false # SSM parameters in every resolved account
+
+  # Entry schema — every entry carries all four keys (no key is optional):
+  #   organizational_units — OU names from organizational_units below; nested
+  #                          OUs roll up to their ancestors
+  #   accounts             — additional explicit 12-digit account IDs
+  #   excluded_accounts    — account IDs never targeted, even as OU members
+  #   inputs               — capability payload, read by the matching stack
+  #                          (see the header of the stack's terragrunt.hcl)
+  ou_deployments = {}
+  # Example:
+  # ou_deployments = {
+  #   backup_vaults = {
+  #     organizational_units = ["Workloads"]
+  #     accounts             = []
+  #     excluded_accounts    = ["111111111111"]
+  #     inputs = {
+  #       vaults = [{ name = "workload-backup" }]
+  #     }
+  #   }
+  #   event_bus_policy = {
+  #     organizational_units = ["Workloads"]
+  #     accounts             = []
+  #     excluded_accounts    = []
+  #     inputs = {
+  #       policy = "" # JSON policy document for the default event bus
+  #     }
+  #   }
+  #   service_quotas = {
+  #     organizational_units = ["Workloads"]
+  #     accounts             = []
+  #     excluded_accounts    = []
+  #     inputs = {
+  #       quota_increases = [{ service_code = "vpc", quota_code = "L-F678F1CE", desired_value = 10 }]
+  #     }
+  #   }
+  #   ssm_parameters = {
+  #     organizational_units = ["Workloads", "Infrastructure"]
+  #     accounts             = []
+  #     excluded_accounts    = []
+  #     inputs = {
+  #       parameters = [{ name = "/tlz/example", type = "String", value = "x" }]
+  #     }
+  #   }
+  # }
+
+  # --- Tags for all resources ---
+  default_tags = {
+    ManagedBy   = "Terraform"
+    Project     = "TerraformLandingZone"
+    Environment = "production"
+  }
+
+  # --- Organization ---
+  organizational_units = [
+    { name = "Security", parent_name = "__root__" },
+    { name = "Infrastructure", parent_name = "__root__" },
+    { name = "Workloads", parent_name = "__root__" },
+    { name = "Suspended", parent_name = "__root__", ignore = true },
+    { name = "Sandbox", parent_name = "Workloads" },
+    { name = "Dev", parent_name = "Workloads" },
+    { name = "Test", parent_name = "Workloads" },
+    { name = "Prod", parent_name = "Workloads" },
+  ]
+
+  declarative_policies = [
+    {
+      name        = "vpc-block-public-access"
+      description = "VPC Block Public Access declarative policy — prevents public access to VPCs."
+      content     = "__LOADER_INJECT__"
+      targets     = ["Security", "Dev", "Test", "Prod", "Network", "SharedServices"]
+      type        = "DECLARATIVE_POLICY_EC2"
+    },
+  ]
+
+  service_control_policies = [
+    {
+      name        = "base-guardrails-1"
+      description = "Protects Config Rules, Lambda, SNS Topics, CloudWatch Log Groups, Kinesis Streams, EventBridge Rules from modification by non-privileged principals."
+      content     = "__LOADER_INJECT__"
+      targets     = ["Infrastructure", "Security", "Workloads"]
+    },
+    {
+      name        = "base-guardrails-2"
+      description = "Protects IAM Roles, CloudFormation Stacks, SSM Parameters, S3 Buckets, Root Account, Security Services (GuardDuty, SecurityHub, Macie, AccessAnalyzer, RAM) from modification by non-privileged principals."
+      content     = "__LOADER_INJECT__"
+      targets     = ["Infrastructure", "Security", "Workloads"]
+    },
+    {
+      name        = "suspended-guardrails"
+      description = "Deny-all SCP for the Suspended OU — blocks all actions for deactivated accounts."
+      content     = "__LOADER_INJECT__"
+      targets     = ["Suspended"]
+    },
+    {
+      name        = "workloads-guardrails-1"
+      description = "SCP for Workload OUs — prevents leaving the organization and root account usage."
+      content     = "__LOADER_INJECT__"
+      targets     = ["Dev", "Test", "Prod"]
+    },
+    {
+      name        = "sandbox-guardrails-1"
+      description = "SCP for Sandbox OU — restricts IAM user creation and CloudTrail modification."
+      content     = "__LOADER_INJECT__"
+      targets     = ["Sandbox"]
+    },
+    {
+      name        = "core-security-guardrails-1"
+      description = "SCP for Security accounts — protects security service configurations and S3 buckets."
+      content     = "__LOADER_INJECT__"
+      targets     = ["Security"]
+    },
+    {
+      name        = "infrastructure-guardrails-1"
+      description = "SCP for Infrastructure OU — prevents leaving the organization and root account usage for Network, Perimeter, and SharedServices accounts."
+      content     = "__LOADER_INJECT__"
+      targets     = ["Infrastructure"]
+    },
+  ]
+  resource_control_policies = [
+    {
+      name        = "base-rcp-guardrails-1"
+      description = "Data perimeter RCP — deny external S3 writes, confused deputy, insecure transport, KMS protection, CT log bucket protection."
+      content     = "__LOADER_INJECT__"
+      targets     = ["Infrastructure", "Security", "Workloads"]
+    },
+  ]
+  tag_policies = [
+    {
+      name        = "org-tag-policy"
+      description = "Organization-wide tag enforcement for Backup Plan tags."
+      content     = "__LOADER_INJECT__"
+      targets     = ["Root"]
+    },
+    {
+      name        = "s3-tag-policy"
+      description = "S3-specific tag enforcement for Backup Plan tags."
+      content     = "__LOADER_INJECT__"
+      targets     = ["Infrastructure", "Workloads"]
+    },
+  ]
+  backup_policies = [
+    {
+      name        = "primary-backup-plan"
+      description = "Organization-wide backup policy with 5 plans (Continuous, Hourly, Daily, Weekly, Monthly)."
+      content     = "__LOADER_INJECT__"
+      targets     = ["Infrastructure", "Workloads"]
+    },
+  ]
+  # Delegated Admin — requires account IDs, configure after account creation
+  # Example:
+  # service_access_principals = [
+  #   { service_principal = "guardduty.${local.dns_suffix}",       account_id = "222222222222" },
+  #   { service_principal = "securityhub.${local.dns_suffix}",     account_id = "222222222222" },
+  #   { service_principal = "access-analyzer.${local.dns_suffix}", account_id = "222222222222" },
+  # ]
+  # Service principals build their DNS suffix from local.dns_suffix, so the
+  # list stays partition-neutral. The loader drops the sso entry
+  # in aws-eusc (Identity Center is not available there).
+  service_access_principals = [
+    { service_principal = "fms.${local.dns_suffix}", account_id = "__AUDIT_ACCOUNT_ID__" },
+    { service_principal = "ec2.${local.dns_suffix}", account_id = "__NETWORK_ACCOUNT_ID__" },
+    { service_principal = "config.${local.dns_suffix}", account_id = "__AUDIT_ACCOUNT_ID__" },
+    { service_principal = "malware-protection.guardduty.${local.dns_suffix}", account_id = "__AUDIT_ACCOUNT_ID__" },
+    { service_principal = "sso.${local.dns_suffix}", account_id = "__SHARED_SERVICES_ACCOUNT_ID__" },
+    # Optional: uncomment when IPAM is configured
+    # { service_principal = "ipam.${local.dns_suffix}", account_id = "__NETWORK_ACCOUNT_ID__" },
+  ]
+  # Trusted access beyond the module toggles. stacks/management/organization
+  # derives aws_service_access_principals from enable_logging, enable_security
+  # (with enable_detective / enable_audit_manager), enable_macie and
+  # enable_central_root_management; the organization owns the
+  # COMPLETE list and an apply with an empty one would disable trusted access
+  # for every service. Use this key to adopt an existing organization's full
+  # trusted-access list (`aws organizations list-aws-service-access-for-organization`
+  # as the management account) and to fill a toggle combination that would
+  # otherwise render empty. Plain service principals, deduplicated against the
+  # toggle list; the loader drops sso.* in aws-eusc (no Identity Center there).
+  # Example:
+  # additional_aws_service_access_principals = [
+  #   "ram.${local.dns_suffix}",
+  #   "sso.${local.dns_suffix}",
+  # ]
+  additional_aws_service_access_principals = []
+  # Policy types beyond the policy lists. The organization owns the COMPLETE
+  # list of enabled policy types, so an adopted organization loses every type
+  # nothing here names on the next apply. Read the current types with
+  # `aws organizations list-roots` (PolicyTypes) and name the extra ones.
+  # Example: additional_enabled_policy_types = ["AISERVICES_OPT_OUT_POLICY"]
+  additional_enabled_policy_types = []
+
+  # --- Accounts ---
+  accounts = [
+    {
+      name                     = "Audit"
+      email                    = "org+audit@example.com"
+      organizational_unit_name = "Security"
+      tags                     = { AccountType = "Audit" }
+    },
+    {
+      name                     = "Log-Archive"
+      email                    = "org+logs@example.com"
+      organizational_unit_name = "Security"
+      tags                     = { AccountType = "Log-Archive" }
+    },
+    {
+      name                     = "Workload-Dev"
+      email                    = "org+workload-dev@example.com"
+      organizational_unit_name = "Workloads"
+      tags                     = { AccountType = "Workload", Environment = "dev" }
+    },
+    {
+      name                     = "SharedServices"
+      email                    = "org+shared-services@example.com"
+      organizational_unit_name = "Infrastructure"
+      tags                     = { AccountType = "SharedServices" }
+    },
+    {
+      name                     = "Network"
+      email                    = "org+network@example.com"
+      organizational_unit_name = "Infrastructure"
+      tags                     = { AccountType = "Network" }
+    },
+    {
+      name                     = "Perimeter"
+      email                    = "org+perimeter@example.com"
+      organizational_unit_name = "Infrastructure"
+      tags                     = { AccountType = "Perimeter" }
+    },
+  ]
+
+  close_on_deletion = false
+
+  # SSO Configuration
+  enable_sso_assignment   = false
+  sso_permission_set_name = "AWSAdministratorAccess"
+  sso_principal_type      = "GROUP"
+  sso_principal_name      = ""
+
+  # --- Control Tower ---
+  control_tower_version = "4.0"
+  enabled_regions       = ["eu-central-1"]
+  opt_in_regions        = [] # Optional: opt-in regions to enable (e.g., ["af-south-1", "ap-east-1"])
+  auto_enroll_ous       = [] # List of OU names to register for CT governance (advisory check block)
+
+  control_tower_controls = [
+    { control_identifier = "CONFIG.CLOUDTRAIL.DT.5", organizational_units = ["Security", "Infrastructure", "Workloads"] },
+    { control_identifier = "CONFIG.LOGS.DT.1", organizational_units = ["Security", "Infrastructure", "Workloads"] },
+    { control_identifier = "CONFIG.IAM.DT.6", organizational_units = ["Security", "Infrastructure", "Workloads"] },
+    { control_identifier = "CONFIG.S3.PR.12", organizational_units = ["Security", "Infrastructure", "Workloads"] },
+    { control_identifier = "CONFIG.EC2.PR.13", organizational_units = ["Security", "Infrastructure", "Workloads"] },
+    { control_identifier = "CONFIG.EC2.PR.14", organizational_units = ["Security", "Infrastructure", "Workloads"] },
+    { control_identifier = "CONFIG.RDS.PR.16", organizational_units = ["Security", "Infrastructure", "Workloads"] },
+    { control_identifier = "CONFIG.LAMBDA.PR.2", organizational_units = ["Security", "Infrastructure", "Workloads"] },
+    { control_identifier = "CONFIG.NETWORK.PR.1", organizational_units = ["Security", "Infrastructure", "Workloads"] },
+    { control_identifier = "CONFIG.NETWORK.PR.2", organizational_units = ["Security", "Infrastructure", "Workloads"] },
+    { control_identifier = "CONFIG.NETWORK.PR.3", organizational_units = ["Security", "Infrastructure", "Workloads"] },
+    { control_identifier = "CONFIG.EC2.DT.17", organizational_units = ["Security", "Infrastructure", "Workloads"] },
+    { control_identifier = "CONFIG.IAM.DT.5", organizational_units = ["Security", "Infrastructure", "Workloads"] },
+    { control_identifier = "AWS-GR_NO_UNRESTRICTED_ROUTE_TO_IGW", organizational_units = ["Security", "Infrastructure", "Workloads"] },
+    { control_identifier = "CONFIG.SAGEMAKER.DT.3", organizational_units = ["Security", "Infrastructure", "Workloads"] },
+    { control_identifier = "CONFIG.SECURITYHUB.DT.1", organizational_units = ["Security", "Infrastructure", "Workloads"] },
+    { control_identifier = "BACKUP_PLAN_MIN_FREQUENCY_AND_MIN_RETENTION_CHECK", organizational_units = ["Security", "Infrastructure", "Workloads"] },
+    { control_identifier = "BACKUP_RECOVERY_POINT_MANUAL_DELETION_DISABLED", organizational_units = ["Security", "Infrastructure", "Workloads"] },
+    { control_identifier = "CONFIG.EC2.DT.10", organizational_units = ["Security", "Infrastructure", "Workloads"] },
+  ]
+
+  # --- Logging ---
+  log_retention_days = 365
+  # guardduty_root_export_cleanup remediates GuardDuty findings written to the
+  # central log bucket ROOT
+  # (AWSLogs/<account>/GuardDuty/... instead of guardduty/AWSLogs/...), where no
+  # guardduty/-prefixed lifecycle rule reaches them. null means no rule and no
+  # plan change, which is the right value unless a deployment actually has such
+  # objects — check with:
+  #   aws s3api list-objects-v2 --bucket <central-log-bucket> \
+  #     --prefix AWSLogs/ --query '[length(Contents), sum(Contents[].Size)]'
+  # An answer of `1  0` (a single zero-byte folder marker, no findings) means
+  # null is right. To arm it:
+  #   guardduty_root_export_cleanup = { retention_days = 30 }
+  # account_ids defaults to the deploying account; remove the variable again
+  # once the root objects are gone and the rules disappear with it.
+  guardduty_root_export_cleanup = null
+  # cloudwatch_log_group_retention is deliberately absent here. The loader merges
+  # it with max() over base.tfvars, this file and the enabled frameworks, so a
+  # value below configurations/base/base.tfvars (365) can never win; a lower
+  # value here would be silently ineffective.
+  # Raise it above 365 in this file if a longer retention is wanted; to shorten
+  # it, change configurations/base/base.tfvars.
+  kms_key_administrators = []
+  force_destroy          = false
+
+  # --- Bucket namespace ---
+  # Leading segment (hyphen included) of every bucket name the logging module
+  # derives: <prefix>central-logs-<log-archive>-<region>, its -replica-, and the
+  # access-logs, elb-logs and vpc-flow-logs buckets. "tlz-" is the name every
+  # deployed bucket already has — a changed value replaces ALL of them, so leave
+  # it. Must start with tlz- (ProtectS3Buckets in the guardrails covers only
+  # arn:*:s3:::tlz-*) and end with a hyphen. Live apply-tests set tlz-l4test-;
+  # this file never should.
+  bucket_name_prefix = "tlz-"
+
+  # --- Resource adoption (docs/resource-adoption.md) ---
+  # Names of existing buckets this deployment takes over. Empty keeps the
+  # derived names and the plan of an existing deployment unchanged. A value
+  # is meant to be paired with an adoption entry in
+  # configurations/base/resource-adoptions.json that imports the bucket.
+  adopted_central_log_bucket_name   = ""
+  adopted_access_logs_bucket_name   = ""
+  adopted_elb_log_bucket_name       = ""
+  adopted_vpc_flow_logs_bucket_name = ""
+
+  # --- Security ---
+  enable_guardduty    = true
+  enable_security_hub = true
+  # NOTE: base.tfvars sets enable_macie = true. The loader merges this switch
+  # by staged precedence: a value set here wins — including false.
+  # enable_macie = false therefore really disables Macie on the next apply
+  # (Macie stops being enabled by this configuration); remove the line or set
+  # null to fall back to base.tfvars and the frameworks.
+  # The merged (and EUSC-filtered) value also drives the organization's
+  # trusted service access: stacks/management/organization reads
+  # filtered_enable_macie from the loader, so macie.<dns-suffix> gains
+  # trusted access exactly when the security stack registers the Macie
+  # delegated administrator.
+  enable_macie           = false
+  enable_access_analyzer = true
+  enable_detective       = true
+  # Audit Manager is in maintenance mode: as of April 30, 2026 AWS refuses
+  # NEW account registrations (and registrations in new regions) with a
+  # ValidationException at apply time, so a fresh deployment with this toggle
+  # on fails the security stack. Existing registrations keep working and stay
+  # managed by the module — only set this to true for an account that
+  # registered Audit Manager before the cutoff.
+  enable_audit_manager = false
+  # GuardDuty S3 Malware Protection
+  enable_guardduty_s3_malware_protection = false
+  guardduty_s3_malware_configs           = []
+  guardduty_eks_manage_agent             = false
+
+  security_hub_standards = [
+    "aws-foundational-security-best-practices/v/1.0.0",
+    "cis-aws-foundations-benchmark/v/3.0.0",
+    "nist-800-53/v/5.0.0",
+  ]
+  # Session Manager — staged precedence: a value set here decides,
+  # including false; unset falls back to base.tfvars and the frameworks.
+  enable_session_manager_logging       = true
+  session_manager_cloudwatch_log_group = "/aws/ssm/session-manager"
+
+  password_policy = {
+    minimum_length            = 14
+    require_uppercase         = true
+    require_lowercase         = true
+    require_numbers           = true
+    require_symbols           = true
+    max_age                   = 90
+    password_reuse_prevention = 24
+    allow_users_to_change     = true
+    hard_expiry               = false
+  }
+
+  # --- SCP Revert Detection ---
+  enable_scp_revert_detection    = true
+  enable_scp_auto_revert         = false
+  scp_revert_notification_emails = ["security-notifications@example.com"]
+
+  # --- Central Root Management ---
+  enable_central_root_management = true
+  is_management_account          = false
+
+  # --- IAM ---
+  enable_stackset_roles = false
+  roles = [
+    # Trust policies build their service principal from local.dns_suffix and
+    # managed_policy_arns entries are partition-neutral policy names —
+    # modules/iam expands them with the current partition's ARN prefix.
+    {
+      name               = "Backup-Role"
+      assume_role_policy = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"backup.${local.dns_suffix}\"},\"Action\":\"sts:AssumeRole\"}]}"
+      managed_policy_arns = [
+        "service-role/AWSBackupServiceRolePolicyForBackup",
+        "service-role/AWSBackupServiceRolePolicyForRestores",
+      ]
+      instance_profile   = false
+      deployment_targets = ["Security", "Infrastructure", "Workloads"]
+    },
+    {
+      name               = "EC2-Default-SSM-Role"
+      assume_role_policy = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"ec2.${local.dns_suffix}\"},\"Action\":\"sts:AssumeRole\"}]}"
+      managed_policy_arns = [
+        "AmazonSSMManagedInstanceCore",
+        "CloudWatchAgentServerPolicy",
+      ]
+      customer_managed_policy_names = ["SSM-S3-Policy"]
+      permissions_boundary          = "End-User-Policy"
+      instance_profile              = true
+      deployment_targets            = ["Security", "Infrastructure", "Workloads"]
+    },
+  ]
+  saml_providers = []
+  customer_managed_policies = [
+    {
+      name               = "End-User-Policy"
+      description        = "Permission boundary for end-user roles — allows common actions, denies dangerous IAM/org actions, VPC changes, boundary bypass, TGW subnet use, org leave, and root actions."
+      policy             = "__LOADER_INJECT__"
+      deployment_targets = ["Security", "Infrastructure", "Workloads"]
+    },
+    {
+      name               = "SSM-S3-Policy"
+      description        = "Grants SSM access to S3 for instance management and patching."
+      policy             = "__LOADER_INJECT__"
+      deployment_targets = ["Security", "Infrastructure", "Workloads"]
+    },
+  ]
+
+  # --- Config Rules ---
+  managed_rules       = []
+  custom_rules        = []
+  conformance_packs   = []
+  remediation_configs = []
+
+  # --- Auto-Remediation Identities ---
+  # (canonical definition — base.tfvars value not reachable via loader)
+  # The two auto-remediations from configurations/base/remediation-configs.json
+  # run as SSM Automations and need two identities this project does not create:
+  #
+  #   remediation_assume_role_arn        IAM role the automation assumes. Must be
+  #                                     a concrete role ARN — SSM rejects
+  #                                     wildcards. Permissions: see the matching
+  #                                     document under
+  #                                     configurations/policies/general/.
+  #   remediation_instance_profile_name  EC2 instance profile the EC2 remediation
+  #                                     attaches to instances without one.
+  #
+  # While an identity is empty, the config-rules stack leaves the remediation
+  # that needs it out instead of deploying an automation that fails on every run.
+  remediation_assume_role_arn       = ""
+  remediation_instance_profile_name = ""
+
+  # --- SSM Automation Documents ---
+  # (canonical definition — base.tfvars value not reachable via loader)
+  # Target documents of the two auto-remediations; the names match the target_id
+  # values in configurations/base/remediation-configs.json. Content must be JSON:
+  # the ssm_documents interface of the security module has no document_format
+  # attribute, so documents are created in the provider default format.
+  ssm_documents = [
+    {
+      name          = "tlz-attach-instance-profile"
+      document_type = "Automation"
+      content_file  = "configurations/ssm-documents/attach-instance-profile.json"
+    },
+    {
+      name          = "tlz-enable-elb-logging"
+      document_type = "Automation"
+      content_file  = "configurations/ssm-documents/enable-elb-logging.json"
+    },
+  ]
+
+  # --- Networking ---
+  vpcs = []
+
+  transit_gateway = {
+    enabled      = false
+    amazon_asn   = 64512
+    route_tables = []
+  }
+
+  route53_zones    = []
+  network_firewall = {}
+  ipam             = {}
+  prefix_lists     = []
+  acm_certificates = [] # Optional: ACM certificate definitions (e.g., [{ domain_name = "example.com", validation_method = "DNS" }])
+  # Default VPC adoption (modules/networking README, "Default VPC removal"):
+  # the apply takes the default VPC and the listed zones' default subnets into
+  # state and REMOVES every rule of the default security group; it does not
+  # delete the default VPC, and turning the toggle off again does not either.
+  delete_default_vpc             = true
+  default_vpc_availability_zones = ["eu-central-1a", "eu-central-1b", "eu-central-1c"]
+  # Default VPC/SG cleanup (security module)
+  enable_delete_default_vpc      = false
+  enable_delete_default_sg_rules = false
+  default_vpc_id                 = ""
+
+  # --- Monitoring ---
+  sns_email_targets  = []
+  sns_lambda_targets = []
+  alert_on_severity  = "HIGH"
+  sns_kms_encryption = true
+  # SecurityHub → CloudWatch Forwarding
+  enable_securityhub_cloudwatch_forwarding = false
+  securityhub_severity_filter              = []
+  securityhub_findings_log_retention       = 365
+  securityhub_findings_log_kms_key_id      = null
+
+  # --- EventBridge ---
+  # A non-empty name enables the default bus policy; the monitoring module
+  # renders the document itself from the versioned template (partition, region
+  # and account are only known there). Empty string disables it.
+  eventbridge_default_bus_policy = "org-events-policy"
+
+  cloudwatch_log_groups = [
+    {
+      name           = "/aws/securityhub/findings"
+      retention_days = 365
+    },
+  ]
+
+  securityhub_eventbridge_rules = [
+    {
+      name          = "tlz-securityhub-to-cloudwatch"
+      description   = "Route Security Hub findings to CloudWatch Logs"
+      event_pattern = "{\"source\":[\"aws.securityhub\"],\"detail-type\":[\"Security Hub Findings - Imported\"],\"detail\":{\"findings\":{\"Severity\":{\"Label\":[\"CRITICAL\",\"HIGH\"]}}}}"
+      target_arn    = "__CW_LOG_GROUP_ARN__"
+    },
+  ]
+
+  # --- SSM Inventory ---
+  ssm_associations = [
+    {
+      name                = "AWS-GatherSoftwareInventory"
+      schedule_expression = "rate(12 hours)"
+      targets = [
+        {
+          key    = "InstanceIds"
+          values = ["*"]
+        },
+      ]
+    },
+  ]
+
+  # --- CloudWatch Log Data Protection ---
+  # The CloudTrail log group (/aws/cloudtrail/tlz-org-trail) is ALWAYS
+  # covered by the module when data protection is enabled
+  # (modules/logging/cloudwatch-data-protection.tf) — do not list it here.
+  # CloudWatch Logs holds exactly one data-protection policy per log group,
+  # so listing it would create a second Terraform resource owning the same
+  # API object. Only list ADDITIONAL log groups.
+  enable_cloudwatch_log_data_protection     = true
+  cloudwatch_log_data_protection_log_groups = []
+
+  # --- CloudWatch Log Subscriptions ---
+  cloudwatch_log_subscriptions = [
+    {
+      name = "org-trail-to-s3"
+      # Must name the log group the organization trail actually creates
+      # (modules/logging/cloudtrail.tf) — a non-existent group fails apply.
+      log_group_name = "/aws/cloudtrail/tlz-org-trail"
+      filter_pattern = ""
+      # destination_arn omitted → targets module-managed Kinesis Data Stream
+    },
+  ]
+
+  # --- Quarantine SCP ---
+  # When enable_quarantine_scp is true, a quarantine SCP is available for
+  # attachment to newly created accounts. It denies all actions except for
+  # TLZ provisioning roles (tlz-*, AWSControlTowerExecution) so the
+  # provisioning pipeline can still configure the account. The SCP has no
+  # default targets — it is attached dynamically to new accounts during
+  # provisioning and removed after the provisioning pipeline completes.
+  enable_quarantine_scp         = true
+  enable_quarantine_auto_detach = false
+  quarantine_scp = {
+    name        = "quarantine-guardrails"
+    description = "Quarantine SCP for new accounts — denies all actions except TLZ provisioning roles until the provisioning pipeline completes."
+    content     = "__LOADER_INJECT__"
+    targets     = []
+  }
+
+  # --- Budgets ---
+  enable_budgets = true
+  budget_config = {
+    limit_amount               = "2000"
+    limit_unit                 = "USD"
+    time_unit                  = "MONTHLY"
+    include_credit             = false
+    include_discount           = true
+    include_other_subscription = true
+    include_recurring          = true
+    include_refund             = false
+    include_subscription       = true
+    include_support            = true
+    include_tax                = true
+    include_upfront            = true
+    use_amortized              = false
+    use_blended                = false
+    notifications = [
+      { threshold = 50, comparison_operator = "GREATER_THAN", notification_type = "ACTUAL", subscriber_email_addresses = ["finance@example.com"] },
+      { threshold = 75, comparison_operator = "GREATER_THAN", notification_type = "ACTUAL", subscriber_email_addresses = ["finance@example.com"] },
+      { threshold = 80, comparison_operator = "GREATER_THAN", notification_type = "ACTUAL", subscriber_email_addresses = ["finance@example.com"] },
+      { threshold = 90, comparison_operator = "GREATER_THAN", notification_type = "ACTUAL", subscriber_email_addresses = ["finance@example.com"] },
+      { threshold = 100, comparison_operator = "GREATER_THAN", notification_type = "ACTUAL", subscriber_email_addresses = ["finance@example.com"] },
+    ]
+  }
+
+  # --- Cost and Usage Report ---
+  enable_cost_and_usage_report = true
+  cur_config = {
+    report_name            = "tlz-cost-and-usage-report"
+    time_unit              = "MONTHLY"
+    format                 = "Parquet"
+    compression            = "Parquet"
+    s3_prefix              = "cur"
+    refresh_closed_reports = true
+    report_versioning      = "CREATE_NEW_REPORT"
+    lifecycle_rules = {
+      retention_days = 365
+    }
+  }
+
+  # --- S3 Cross-Region Replication ---
+  s3_replication_config = {} # Optional: S3 cross-region replication (e.g., { destination_region = "eu-west-1", destination_bucket = "tlz-replica" })
+
+  # --- Backup ---
+  backup_vaults = []
+
+  # --- SSM Parameters ---
+  ssm_parameters = []
+
+  # --- Service Quotas ---
+  service_quota_increases = []
+
+  # --- FMS Notification Channel ---
+  enable_fms_notification_channel = false
+
+  # --- Firewall Config Bucket ---
+  enable_firewall_config_bucket = false
+  firewall_config_bucket_name   = ""
+  # --- Firewall Appliances (stacks/management/firewall-appliances) ---
+  # Third-party firewall instances, manager nodes and auto-scaling fleets from
+  # modules/ec2-compute. Entries reference subnets, security groups and target
+  # groups by the key names of the networking outputs (vpc_name.subnet_name,
+  # vpc_name.sg_name, GWLB/target group name). The AMI is a mandatory
+  # per-entry input (format ami-<hex>). A launch template's user data is a
+  # template string: user_data_template inline, or user_data_template_file
+  # naming a repository file the loader resolves; placeholders come from
+  # user_data_values plus the built-ins config_bucket / config_bucket_arn
+  # (the firewall configuration bucket of the security stack).
+  enable_firewall_appliances  = false
+  firewall_launch_templates   = {}
+  firewall_autoscaling_groups = {}
+  firewall_instances          = {}
+  # Launch template names that deliberately leave IMDSv1 reachable through
+  # their metadata option: each name silences the IMDSv1 warning for that one
+  # template only, never for the others. Empty leaves every plan as it was.
+  # What it costs: on that template any process reaching the link-local
+  # metadata address reads the instance role's credentials without a signed
+  # token, as long as the name is listed.
+  firewall_imdsv1_acknowledged_launch_templates = []
+  # SSM building blocks: appliance configuration documents (content as
+  # configuration strings) and associations targeting the instances above by
+  # key (instance_keys) or by tag (target_tag_key / target_tag_values).
+  firewall_ssm_documents    = {}
+  firewall_ssm_associations = {}
+  # Example:
+  # firewall_launch_templates = {
+  #   appliance = {
+  #     ami_id             = "ami-0123456789abcdef0" # vendor appliance AMI of this partition
+  #     instance_type      = "c5.xlarge"
+  #     user_data_template = "config-bucket=$${config_bucket}; hostname=$${name}"
+  #     user_data_values   = { name = "fw-1" }
+  #     network_interfaces = [{ device_index = 0, subnet_name = "inspection.firewall-a", security_group_names = ["inspection.appliance-mgmt"] }]
+  #   }
+  # }
+  # firewall_autoscaling_groups = {
+  #   appliance-fleet = {
+  #     launch_template = "appliance"
+  #     min_size        = 1
+  #     max_size        = 3
+  #     subnet_names    = ["inspection.firewall-a"]
+  #     target_groups   = ["central-inspection"] # GWLB name from gateway_load_balancers
+  #   }
+  # }
+  # firewall_instances = {
+  #   manager = { launch_template = "appliance" }
+  # }
+  # --- Workload Compute (stacks/workload-dev/workload-compute) ---
+  # Launch templates and auto-scaling groups for workloads, same entry forms
+  # as the firewall collections; target_groups reference the target group
+  # names of the networking stack (application and network load balancers).
+  enable_workload_compute     = false
+  workload_launch_templates   = {}
+  workload_autoscaling_groups = {}
+  # Acknowledged IMDSv1 launch templates, same meaning and same cost as the
+  # firewall list above.
+  workload_imdsv1_acknowledged_launch_templates = []
+  # --- Directory Config (stacks/management/directory-config) ---
+  # Declarative first-fill of an AWS Managed Microsoft AD: one configuration
+  # instance (Windows AMI per entry), domain join through the AWS-managed
+  # document AWS-JoinDirectoryServiceDomain (directory ID, domain name and
+  # DNS addresses come from the iam stack outputs, keyed by
+  # directory_config_directory_name), directory setup as SSM documents with
+  # PowerShell content strings and their associations. The directory
+  # contents themselves (users, groups, password policy) are not Terraform
+  # state — see docs/directory-config.md.
+  enable_directory_config           = false
+  directory_config_directory_name   = "" # name of the managed_active_directories entry
+  directory_config_launch_templates = {}
+  directory_config_instances        = {}
+  directory_config_ssm_documents    = {}
+  directory_config_ssm_associations = {}
+  # Acknowledged IMDSv1 launch templates, same meaning and same cost as the
+  # firewall list above.
+  directory_config_imdsv1_acknowledged_launch_templates = []
+  # Example:
+  # directory_config_directory_name = "corp-directory"
+  # directory_config_launch_templates = {
+  #   directory-config = {
+  #     ami_id        = "ami-0123456789abcdef0" # Windows Server AMI of this partition
+  #     instance_type = "t3.medium"
+  #     network_interfaces = [{ device_index = 0, subnet_name = "management.private-a", security_group_names = ["management.directory-config"] }]
+  #   }
+  # }
+  # directory_config_instances = {
+  #   directory-config = { launch_template = "directory-config" }
+  # }
+  # directory_config_ssm_documents = {
+  #   directory-setup = {
+  #     document_format = "YAML"
+  #     content         = "schemaVersion: '2.2'\ndescription: Create AD users and groups\nmainSteps:\n  - action: aws:runPowerShellScript\n    name: setup\n    inputs:\n      runCommand:\n        - New-ADGroup -Name Admins -GroupScope Global\n"
+  #   }
+  # }
+  # directory_config_ssm_associations = {
+  #   directory-setup = { document_key = "directory-setup", instance_keys = ["directory-config"] }
+  # }
+
+  # --- RAM Sharing ---
+  enable_ram_sharing = true
+
+  # --- Account Warming ---
+  enable_account_warming = false
+
+  # --- Deployment Account ---
+  enable_deployment_account   = false
+  enable_pipeline             = false
+  pipeline_type               = "codepipeline" # "codepipeline" | "ecs" | "external"
+  repository_name             = ""             # codepipeline: owner/repo of the connection source; ecs: CodeCommit repository name (no slash)
+  approval_notification_email = ""
+  external_ci_provider        = "github" # "github" | "gitlab"
+
+  # Roles of the deployment account setup. deployment_role_name matches the
+  # default of modules/deployment-role; change it only together with the module
+  # input. pipeline_role_name must equal the fixed role name in
+  # modules/pipeline ("TLZPipelineRole"): this value feeds only the protection
+  # SCP, so a mismatch silently leaves the real pipeline role unprotected.
+  deployment_role_name = "TLZDeploymentRole"
+  pipeline_role_name   = "TLZPipelineRole"
+
+  # true selects the narrow inline policy document of
+  # modules/deployment-role, in which the guardduty, securityhub, macie2,
+  # access-analyzer, sso, sso-directory and identitystore `service:*` grants
+  # are replaced by the actions the modules call. Commented out (and false)
+  # keeps the broad document (see modules/deployment-role/README.md).
+  # deployment_role_narrow_grants = false
+
+  # ID of the Infrastructure OU (format ou-xxxx-xxxxxxxx). Needed only with
+  # enable_deployment_account = true: the Pipeline SCP is attached to this OU.
+  # The OU is created by modules/organization, so its ID is not known before the
+  # first apply — read it from the console or from the module output
+  # ou_name_to_id and enter it here. As long as the value is empty, the
+  # Pipeline SCP is not created.
+  pipeline_scp_infrastructure_ou_id = ""
+
+  # --- Identity Center ---
+  # Read directly. account_ids is not configured here: the accounts stack
+  # already has the map as dependency.accounts.outputs.account_ids.
+  identity_center_permission_sets = []
+  identity_center_assignments     = []
+
+  # --- Bootstrap KMS alias ---
+  # Empty means "module default name".
+  kms_key_alias = ""
+
+  # --- Control Tower retentions ---
+  # 0 means "no override": the loader then uses the merged log_retention_days so
+  # that Control Tower does not keep logs for a shorter period than the rest of
+  # the landing zone. A larger value raises the period for Control Tower alone.
+  control_tower_logging_retention_days        = 0
+  control_tower_access_logging_retention_days = 0
+
+  # --- Cost and Usage Report bucket ---
+  noncurrent_version_expiration_days = 365
+
+  # --- Deployment role ---
+  # The role name is already configured above as deployment_role_name. Empty
+  # means the role is created without a permissions boundary.
+  permissions_boundary_arn = ""
+
+  # --- IAM users, groups and Managed Active Directory ---
+  # vpc_ids and subnet_ids are not configured here: Managed AD needs the IDs the
+  # networking stack produces, so they belong in a dependency block.
+  iam_users                  = []
+  iam_groups                 = []
+  managed_active_directories = []
+
+  # --- CloudTrail and Config recorder details ---
+  # cloudtrail_management_events takes part in the merge (OR) — the remaining
+  # five only describe this installation.
+  # manage_config_recorder: an account allows one Config recorder per region.
+  # Set false when another owner (a legacy recorder, a Control Tower baseline)
+  # holds the slot — the management logging stack then skips the recorder, its
+  # delivery channel and its status and applies everything else beside them.
+  # The aggregator stays; use_config_service_linked_role and
+  # config_recorder_custom_role_arn have no effect while this is false.
+  cloudtrail_management_events    = true
+  cloudtrail_account_trails       = []
+  cloudtrail_sns_topic_name       = ""
+  cloudwatch_log_exclusions       = []
+  manage_config_recorder          = true
+  use_config_service_linked_role  = true
+  config_recorder_custom_role_arn = ""
+
+  # --- Monitoring: topics, metric filters, alarms ---
+  # Merged by the loader through concatenation, so a framework can add alarms to
+  # this list instead of replacing it. Without these three keys no metric filter
+  # and no alarm was created in any deployment.
+  sns_topics                = []
+  cloudwatch_metric_filters = []
+  cloudwatch_alarms         = []
+
+  # --- Networking: VPC scaffolding and templates ---
+  # vpc_templates is documentation/intent: the module warns instead of creating
+  # cross-account VPCs.
+  dhcp_options_sets = []
+  elastic_ips       = []
+  # Named VPC endpoint policies; gateway_endpoint_options and
+  # interface_endpoints entries reference them through policy_name. The
+  # vpc-endpoint-default-policy document is versioned under
+  # configurations/policies/general/ and injected by the loader; it scopes
+  # endpoint access to this organization, so the loader hands it on only once
+  # import_organization_id is set (an unresolved organization mark would deny
+  # every principal).
+  endpoint_policies = [
+    {
+      name   = "vpc-endpoint-default-policy"
+      policy = "__LOADER_INJECT__"
+    },
+  ]
+  vpc_flow_logs_default = null
+  vpc_templates         = []
+
+  # --- Networking: load balancing ---
+  # The OIDC issuer URLs an authenticated_edge may name, each a full https://
+  # URL compared as an exact string. REQUIRED (non-empty) as soon as any load
+  # balancer below is internet-facing: the module refuses such an entry while
+  # this list is empty, and refuses any edge whose issuer is not listed. For
+  # this project the entry is your identity provider's OIDC issuer URL exactly as your
+  # identity team publishes it -- do not invent or guess the value.
+  authenticated_edge_allowed_issuers = []
+  # An internet-facing entry needs an authenticated edge on every listener -- see modules/networking/README.md#load-balancing.
+  load_balancers         = []
+  target_groups          = []
+  gateway_load_balancers = []
+
+  # --- Networking: hybrid connectivity ---
+  vpc_peering               = []
+  dx_gateways               = []
+  customer_gateways         = []
+  tgw_connect_attachments   = []
+  tgw_multicast_domains     = []
+  enable_tgw_flow_logs      = false
+  tgw_flow_logs_destination = "s3"
+
+  # --- Networking: DNS, resolver, query logging ---
+  dns_firewall_rule_groups = []
+  resolver_endpoints       = []
+  resolver_rules           = []
+  # The single query-logging toggle; true keeps query logging on.
+  enable_route53_query_logging      = true
+  route53_query_logging_destination = "cloudwatch"
+  route53_query_logging_vpc_names   = []
+
+  # --- Chatbot policies ---
+  # Merged by the loader like the five neighbouring policy types.
+  chatbot_policies = []
+
+  # --- Pipeline source and external CI ---
+  # external_ci_provider is already configured above.
+  # external_ci_audiences is deliberately absent: the module default
+  # ["sts.amazonaws.com"] holds the DNS suffix as a literal, and this file
+  # names a DNS suffix only in the partition map at the top. The audience
+  # has to be derived from the partition in the pipeline stack.
+  source_connection_arn  = "" # required for pipeline_type codepipeline; must stay empty for ecs (CodeCommit trigger only)
+  branch_name            = "main"
+  external_ci_thumbprint = ""
+
+  # --- GuardDuty: protection plans and fine tuning ---
+  # The four protection plans take part in the merge (OR). Their module default
+  # is true, so leaving them at true here keeps the current behaviour and a
+  # false takes effect as long as no other layer sets true.
+  guardduty_s3_protection     = true
+  guardduty_eks_protection    = true
+  guardduty_lambda_protection = true
+  guardduty_rds_protection    = true
+  # Fine tuning — read directly. guardduty_deployment_targets serves both
+  # modules/security and modules/security-org-config.
+  guardduty_deployment_targets             = []
+  guardduty_excluded_regions               = []
+  guardduty_s3_protection_excluded_regions = []
+  guardduty_export_prefix                  = "guardduty/"
+  guardduty_lifecycle_rules                = null
+
+  # --- Encryption: KMS key ARNs and region exclusions ---
+  # The switches themselves are in configurations/base/base.tfvars; the ARNs and
+  # exclusions describe this installation. Empty ARN means "TLZ-managed key".
+  ebs_default_kms_key_arn         = ""
+  lambda_encryption_kms_key_arn   = ""
+  ebs_encryption_excluded_regions = []
+  # Customer-managed keys for Lambda environment variables and CodeBuild
+  # output, one per stack: logging (record-processor Lambda), monitoring
+  # (onboarding and SNS-forwarder Lambdas), pipeline (both CodeBuild projects).
+  # Empty keeps the AWS-managed key and the plan. A named key also grants the
+  # consuming role access to exactly that key; the deploying identity still
+  # needs kms:Encrypt in the key policy. A customer-managed key costs monthly.
+  logging_lambda_environment_kms_key_arn    = ""
+  monitoring_lambda_environment_kms_key_arn = ""
+  codebuild_encryption_kms_key_arn          = ""
+
+  # --- Session Manager and SSM ---
+  session_manager_s3_bucket_name             = ""
+  session_manager_s3_key_prefix              = "ssm-sessions/"
+  session_manager_kms_key_id                 = ""
+  session_manager_attach_policy_to_roles     = []
+  ssm_document_share_targets                 = []
+  ssm_resource_data_sync_prefix              = "ssm-inventory/"
+  ssm_block_public_sharing_excluded_accounts = []
+
+  # --- Security Hub and Macie: regions and per-standard targets ---
+  # enable_security_hub_region_aggregation takes part in the merge (OR), module
+  # default true. security_hub_standards_config is merged by concatenation and
+  # says *where* a standard applies — security_hub_standards above says *which*.
+  enable_security_hub_region_aggregation = true
+  security_hub_aggregation_regions       = []
+  security_hub_standards_config          = []
+  security_hub_excluded_regions          = []
+  macie_excluded_regions                 = []
+
+  # --- Security Hub: controls switched off for this installation ---
+  # Neither base.tfvars nor a framework file carries the key, so this key is
+  # the only path to aws_securityhub_standards_control.disabled. Shape:
+  #   [{ standards_arn_suffix = "cis-aws-foundations-benchmark/v/3.0.0",
+  #      control_ids = ["CloudTrail.2"] }]
+  security_hub_disabled_controls = []
+
+  # --- Security Hub: automation rules contributed by this installation ---
+  # Merged by concatenation: entries here supplement the baseline rules from
+  # configurations/base/security-hub-automation-rules.json instead of
+  # replacing them. Shape mirrors modules/security
+  # var.security_hub_automation_rules:
+  #   [{ rule_name = "my-rule", rule_order = 200, description = "...",
+  #      criteria = { ... }, actions = { ... } }]
+  security_hub_automation_rules = []
+
+  # --- Customer-managed KMS keys ---
+  # base.tfvars carries no kms_keys and only three of the eight framework files
+  # do, so customer key management needs a source in this layer. Shape:
+  #   [{ alias = "my-key", description = "...", enable_key_rotation = true }]
+  kms_keys = []
+
+  # --- ELB access log bucket ---
+  # configurations/base/base.tfvars already sets true; this key exists so the
+  # switch can also be reached from this layer, the way enable_macie and
+  # enable_guardduty already can. Staged precedence: a value set
+  # here decides, including false — false switches the bucket off on the next
+  # apply.
+  enable_elb_log_bucket = true
+
+  # --- Audit Manager report storage ---
+  # The switch is merged (OR, module default false); the destination and the KMS
+  # key describe this installation. audit_manager_bucket_lifecycle_days is
+  # merged with max(), and 0 means "no lifecycle".
+  enable_audit_manager_bucket         = false
+  audit_manager_bucket_kms_key_arn    = ""
+  audit_manager_bucket_lifecycle_days = 365
+  audit_manager_reports_destination   = null
+
+  # --- S3 account public access, root account, Firewall Manager ---
+  # root_credentials_management is merged (OR, module default true);
+  # allow_root_sessions is merged with AND and lives in base.tfvars.
+  # fms_policies is merged by concatenation.
+  root_credentials_management              = true
+  s3_public_access_block_excluded_accounts = []
+  resource_policy_enforcement_lambda_arn   = ""
+  fms_policies                             = []
+
+  # ===========================================================================
+  # Optional pass-through keys
+  # ===========================================================================
+  # Every key below is read by a stack or the loader through a try() with the
+  # default shown here. The template lists them so that the template and the
+  # read sites cannot drift apart: each value is the read site's own
+  # fallback, so copying this file changes nothing. The section is grouped by
+  # the reading stack.
+
+  # --- Logging stack ---
+  central_log_bucket_lifecycle_rules   = null # null = derived module ruleset
+  access_logs_bucket_lifecycle_rules   = null
+  elb_log_bucket_lifecycle_rules       = null
+  vpc_flow_logs_bucket_lifecycle_rules = null
+  central_log_bucket_policies          = {} # extra bucket policy statements by Sid
+  access_logs_bucket_policies          = {}
+  elb_log_bucket_policies              = {}
+  allow_bucket_policy_overrides        = false
+  s3_object_lock_config                = {} # settings for enable_s3_object_lock
+  cloudtrail_lake_config               = {} # settings for enable_cloudtrail_lake
+  vpc_flow_logs_bucket_config          = {} # settings for enable_vpc_flow_logs_bucket
+  cloudtrail_org_trail_settings        = {}
+  cloudwatch_log_exclusion_rules       = []
+  deployment_organizational_unit       = ""
+  cloudwatch_log_account_subscription  = {}
+  kinesis_pipeline_config              = {}
+
+  # --- IAM stack ---
+  secrets_kms_key_arn = ""
+  enable_break_glass  = false
+  break_glass_config  = null # null keeps the module default
+
+  # --- Monitoring stack ---
+  securityhub_findings_log_group_name = "/aws/events/securityhub-findings"
+  enable_break_glass_alarm            = false
+  break_glass_alarm_config            = null
+  enable_log_group_onboarding         = false
+  log_group_onboarding                = {}
+  sns_forwarder_config                = { central_topic_arn = "" } # settings for the SNS forwarder toggle
+
+  # --- Security stack ---
+  session_manager_excluded_accounts            = []
+  guardduty_ec2_protection_excluded_regions    = []
+  guardduty_eks_protection_excluded_regions    = []
+  guardduty_lambda_protection_excluded_regions = []
+  guardduty_rds_protection_excluded_regions    = []
+  macie_automated_discovery                    = null
+  macie_classification_scope_excluded_buckets  = []
+  macie_disabled_regions                       = []
+  guardduty_export_lifecycle_rules             = null
+  audit_manager_bucket_lifecycle_rules         = null
+  macie_export_lifecycle_rules                 = null
+  session_manager_lifecycle_rules              = null
+  fms_notification_sns_topic_arn               = ""
+  fms_notification_sns_role_name               = "FMSNotificationRole"
+  # fms_admin_account_registered: attestation that the Firewall Manager
+  # administrator was registered out of band (aws fms associate-admin-account
+  # from the management account) and that the applying account is one. A
+  # non-empty fms_policies list fails at plan time while this is false — the
+  # module cannot register or verify the administrator itself.
+  fms_admin_account_registered                  = false
+  firewall_config_bucket_kms_key_arn            = "" # for enable_firewall_config_bucket
+  resource_policy_enforcement                   = []
+  resource_policy_enforcement_network_perimeter = {}
+
+  # --- Networking stack ---
+  acm_certificate_material            = {} # sensitive material for imported certificates
+  route53_query_logging_share_targets = []
+  enable_shared_subnet_tagging        = false
+  shared_subnet_tags                  = []
+
+  # --- Organization stack ---
+  enable_allow_list_detach = false
+  feature_set              = "ALL" # organization feature set
+
+  # --- Control Tower stack ---
+  enable_organization_trail = true
+
+  # --- Accounts stack ---
+  management_account_alias = ""
+  # created_account_role_name (fallback null) is listed beside
+  # account_access_role_name in the global section above.
+
+  # --- Budgets stacks (management and workload) ---
+  additional_budgets = []
+
+  # --- Config-rules stack ---
+  enable_custom_rule_lambdas = false
+
+  # --- Pipeline stack ---
+  enable_pipeline_notifications = false
+  pipeline_notification_states  = ["STARTED", "SUCCEEDED", "FAILED", "SUPERSEDED", "CANCELED"]
+
+  # --- CUR stack ---
+  cur_bucket_lifecycle_rules = null
+
+  # --- Customizations (CloudFormation) ---
+  enable_cloudformation_customizations = false
+  cloudformation_stacks                = []
+  cloudformation_stack_sets            = []
+
+  # --- Audit: security-org-config stack ---
+  guardduty_features = {} # GuardDuty deployment target selection
+
+  # --- Service Catalog stack ---
+  service_catalog_portfolios = []
+
+  # --- Loader (configurations/loader.hcl) ---
+  # Merge-neutral values: false in an anytrue() merge and null in a
+  # null-filtered or staged-precedence merge leave the other layers' result
+  # unchanged. Switches under the staged precedence rule use null
+  # here: an explicit true/false would be an operator decision and would win
+  # against base.tfvars and the frameworks.
+  allow_root_sessions                        = true # AND-merged: true is neutral here
+  cloudtrail_s3_data_events                  = null # staged precedence: base.tfvars true decides while unset
+  cloudtrail_lambda_data_events              = null # staged precedence: base.tfvars true decides while unset
+  cloudtrail_insights                        = []   # list union: entries here add to base.tfvars and the frameworks
+  cloudwatch_log_data_protection_identifiers = []
+  enable_ebs_default_encryption              = null
+  enable_lambda_encryption                   = false
+  enable_per_account_kms_keys                = false
+  enable_s3_public_access_block              = null
+  enable_separate_access_logs_bucket         = false
+  enable_session_manager_s3_logging          = false
+  enable_sqs_kms_key                         = false
+  enable_ssm_block_public_sharing            = null
+  enable_ssm_resource_data_sync              = false
+  guardduty_eks_runtime_monitoring           = false
+  guardduty_keep_malware_snapshots           = false
+  guardduty_malware_protection               = null # staged precedence: base.tfvars true decides while unset
+  macie_publish_policy_findings              = null # staged precedence: base.tfvars true decides while unset
+  tgw_flow_logs_retention_days               = 365
+  tgw_flow_logs_s3_path                      = "tgw-flow-logs"
+}

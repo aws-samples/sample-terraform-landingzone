@@ -1,0 +1,77 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyLeaveOrganization",
+      "Effect": "Deny",
+      "Action": "organizations:LeaveOrganization",
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyRootAccount",
+      "Effect": "Deny",
+      "Action": "*",
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "aws:PrincipalArn": "arn:*:iam::*:root"
+        }
+      }
+    },
+    {
+      "Sid": "DenyNetworkChanges",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:AcceptTransitGateway*",
+        "ec2:AcceptVpc*",
+        "ec2:AllocateAddress",
+        "ec2:AssociateAddress",
+        "ec2:AssociateNatGatewayAddress",
+        "ec2:AssociateTransitGateway*",
+        "ec2:AttachInternetGateway",
+        "ec2:AttachVpnGateway",
+        "ec2:CreateEgressOnlyInternetGateway",
+        "ec2:CreateInternetGateway",
+        "ec2:CreateIpam*",
+        "ec2:CreateNatGateway",
+        "ec2:CreateRoute*",
+        "ec2:CreateSubnet*",
+        "ec2:CreateTransitGateway*",
+        "ec2:CreateVpc",
+        "ec2:CreateVpcEndpoint",
+        "ec2:CreateVpcPeeringConnection",
+        "ec2:CreateVpn*",
+        "ec2:DeleteFlowLogs",
+        "ec2:DeleteEgressOnlyInternetGateway",
+        "ec2:DeleteInternetGateway",
+        "ec2:DeleteIpam",
+        "ec2:DeleteNatGateway",
+        "ec2:DeleteRoute*",
+        "ec2:DeleteSubnet",
+        "ec2:DeleteTransitGateway*",
+        "ec2:DeleteVpc*",
+        "ec2:DeprovisionIpamPoolCidr",
+        "ec2:DetachInternetGateway",
+        "ec2:DisassociateNatGatewayAddress",
+        "ec2:DisassociateRouteTable",
+        "ec2:DisassociateTransitGateway*",
+        "ec2:ModifyIpam*",
+        "ec2:ModifyTransitGateway*",
+        "ec2:ProvisionIpamPoolCidr",
+        "ec2:ReleaseIpamPoolAllocation"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotLike": {
+          "aws:PrincipalArn": [
+            "arn:*:iam::*:role/TLZDeploymentRole",
+            "arn:*:iam::*:role/tlz-*",
+            "arn:*:iam::*:role/AWSControlTowerExecution",
+            "arn:*:iam::*:role/stacksets-exec-*",
+            "arn:*:iam::*:role/OrganizationAccountAccessRole"
+          ]
+        }
+      }
+    }
+  ]
+}

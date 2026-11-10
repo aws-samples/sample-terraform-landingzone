@@ -1,0 +1,51 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EnableRootAccountAccess",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "${arn_prefix}:iam::${account_id}:root"
+      },
+      "Action": "kms:*",
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowS3ReplicationEncrypt",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "${replication_role_arn}"
+      },
+      "Action": [
+        "kms:Encrypt",
+        "kms:GenerateDataKey*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowCloudTrailEncrypt",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "cloudtrail.${dns_suffix}"
+      },
+      "Action": [
+        "kms:GenerateDataKey*",
+        "kms:DescribeKey"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowConfigEncrypt",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "config.${dns_suffix}"
+      },
+      "Action": [
+        "kms:GenerateDataKey*",
+        "kms:Decrypt",
+        "kms:DescribeKey"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

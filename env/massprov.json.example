@@ -1,0 +1,25 @@
+{
+  "_comment": [
+    "Mass-provisioning study (tests/live/mass_provisioning/) — operator config",
+    "TEMPLATE. Copy to env/massprov.json (gitignored) and substitute the",
+    "root e-mail template. The value shipped here is an RFC 2606 placeholder",
+    "and the preflight refuses it: no run can send a placeholder address to",
+    "CreateAccount.",
+    "",
+    "root_email_template: must contain {run} (the run stamp, e.g.",
+    "20260911T211300Z) and {index} (01..50). Both tokens are required — AWS",
+    "never releases a root e-mail, closed accounts included, so every address",
+    "must be unique within the run AND across runs. Use a catch-all or a",
+    "plus-addressed scheme at a domain you receive mail for, e.g.",
+    "  aws-root+tlz-massprov-{run}-{index}@<your catch-all domain>",
+    "Rendered addresses must stay within 64 characters.",
+    "",
+    "parallelism_schedule: [parallelism, count] batches run back to back; the",
+    "counts must sum to account_count. parallelism is the number of",
+    "CreateAccount requests in flight — the quantity `terraform apply",
+    "-parallelism=N` bounds for aws_organizations_account."
+  ],
+  "root_email_template": "tlz-massprov+{run}-{index}@example.com",
+  "account_count": 50,
+  "parallelism_schedule": [[1, 5], [5, 15], [10, 15], [20, 15]]
+}

@@ -1,0 +1,48 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EnableRootAccountAccess",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "${arn_prefix}:iam::${account_id}:root"
+      },
+      "Action": "kms:*",
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowSNSServiceEncrypt",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "sns.${dns_suffix}"
+      },
+      "Action": [
+        "kms:Decrypt",
+        "kms:GenerateDataKey*",
+        "kms:DescribeKey"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowTopicPublishersKeyUse",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": [
+          "cloudwatch.${dns_suffix}",
+          "events.${dns_suffix}",
+          "budgets.${dns_suffix}"
+        ]
+      },
+      "Action": [
+        "kms:Decrypt",
+        "kms:GenerateDataKey*"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEqualsIfExists": {
+          "aws:SourceAccount": "${account_id}"
+        }
+      }
+    }
+  ]
+}

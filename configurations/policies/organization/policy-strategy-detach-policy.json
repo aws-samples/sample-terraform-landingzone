@@ -1,0 +1,24 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "PolicyStrategyDetach",
+      "Effect": "Allow",
+      "Action": [
+        "organizations:AttachPolicy",
+        "organizations:DetachPolicy"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "FunctionLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "${arn_prefix}:logs:*:*:log-group:/aws/lambda/tlz-policy-strategy-detach:*"
+    }
+  ]
+}

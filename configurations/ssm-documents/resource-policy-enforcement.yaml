@@ -1,0 +1,88 @@
+---
+description: Enforce data perimeter resource policies on S3 buckets and KMS keys
+schemaVersion: "0.3"
+assumeRole: "{{ AutomationAssumeRole }}"
+parameters:
+  ResourceArn:
+    type: String
+    description: "ARN of the resource to enforce policy on"
+  PolicyDocument:
+    type: String
+    description: "JSON policy document to apply"
+  AutomationAssumeRole:
+    type: String
+    description: "IAM role ARN for automation"
+mainSteps:
+  # The branch needs the ARN's service field, not the whole ARN: comparing the
+  # full ARN with "s3" or "kms" never matched. ARNs are
+  # arn:<partition>:<service>:<region>:<account>:<resource>, so the third
+  # colon-separated field is the service in every partition (aws, aws-us-gov,
+  # aws-cn, aws-eusc, ...). Any other service, a malformed ARN, an S3 ARN that
+  # is not a bucket ARN or a KMS ARN that is not a key ARN (an alias ARN, for
+  # one) fails this step, so no policy is written to a resource of the wrong
+  # type. tests/test_regression_resource_policy_arn_shapes.py runs this handler.
+  - name: parseResourceArn
+    action: "aws:executeScript"
+    inputs:
+      Runtime: python3.11
+      Handler: parse_arn
+      InputPayload:
+        ResourceArn: "{{ ResourceArn }}"
+      Script: |-
+        def parse_arn(events, context):
+            arn = events["ResourceArn"]
+            parts = arn.split(":", 5)
+            if len(parts) != 6 or parts[0] != "arn" or not parts[1]:
+                raise ValueError("ResourceArn is not an ARN: " + arn)
+            service = parts[2]
+            if service not in ("s3", "kms"):
+                raise ValueError("Unsupported service '" + service + "' in " + arn + "; expected s3 or kms")
+            region, account, resource = parts[3], parts[4], parts[5]
+            # put_bucket_policy takes the bucket name. A bucket ARN is
+            # arn:<p>:s3:::<bucket> -- no region, no account, no object key.
+            if service == "s3":
+                if region or account or not resource or "/" in resource:
+                    raise ValueError("ResourceArn is not an S3 bucket ARN (arn:<partition>:s3:::<bucket>): " + arn)
+                return {"Service": service, "ResourceName": resource}
+            # put_key_policy takes the key ARN as it is. A key ARN is
+            # arn:<p>:kms:<region>:<account>:key/<key-id>; an alias ARN names
+            # an alias, and PutKeyPolicy refuses it.
+            key_id = resource[len("key/"):] if resource.startswith("key/") else ""
+            if (not region or len(account) != 12 or not account.isdigit()
+                    or not key_id or not all(c.isalnum() or c == "-" for c in key_id)):
+                raise ValueError("ResourceArn is not a KMS key ARN (arn:<partition>:kms:<region>:<account>:key/<key-id>): " + arn)
+            return {"Service": service, "ResourceName": arn}
+    outputs:
+      - Name: Service
+        Selector: $.Payload.Service
+        Type: String
+      - Name: ResourceName
+        Selector: $.Payload.ResourceName
+        Type: String
+  - name: determineResourceType
+    action: "aws:branch"
+    inputs:
+      Choices:
+        - NextStep: applyS3BucketPolicy
+          Variable: "{{ parseResourceArn.Service }}"
+          StringEquals: "s3"
+        - NextStep: applyKmsKeyPolicy
+          Variable: "{{ parseResourceArn.Service }}"
+          StringEquals: "kms"
+  - name: applyS3BucketPolicy
+    action: "aws:executeAwsApi"
+    inputs:
+      Service: s3
+      Api: put_bucket_policy
+      Bucket: "{{ parseResourceArn.ResourceName }}"
+      Policy: "{{ PolicyDocument }}"
+    isEnd: true
+  - name: applyKmsKeyPolicy
+    action: "aws:executeAwsApi"
+    inputs:
+      Service: kms
+      Api: put_key_policy
+      KeyId: "{{ ResourceArn }}"
+      PolicyName: default
+      Policy: "{{ PolicyDocument }}"
+    isEnd: true

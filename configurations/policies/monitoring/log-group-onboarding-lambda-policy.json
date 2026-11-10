@@ -1,0 +1,65 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "LogGroupOnboarding",
+      "Effect": "Allow",
+      "Action": [
+        "logs:PutRetentionPolicy",
+        "logs:AssociateKmsKey",
+        "logs:DescribeLogGroups"
+      ],
+      "Resource": "${arn_prefix}:logs:${region}:${account_id}:log-group:*"
+    },
+    {
+      "Sid": "CloudWatchLogsAccess",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "${arn_prefix}:logs:*:*:log-group:/aws/lambda/tlz-log-group-onboarding:*"
+    },
+    {
+      "Sid": "DeadLetterQueueAccess",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:SendMessage"
+      ],
+      "Resource": "${arn_prefix}:sqs:*:*:${dlq_name}"
+    }%{ if kms_key_arn != "" },
+    {
+      "Sid": "DescribeConfiguredKey",
+      "Effect": "Allow",
+      "Action": [
+        "kms:DescribeKey"
+      ],
+      "Resource": "${kms_key_arn}"
+    }%{ endif }%{ if destination_arn != "" },
+    {
+      "Sid": "AttachSubscriptionFilter",
+      "Effect": "Allow",
+      "Action": [
+        "logs:PutSubscriptionFilter"
+      ],
+      "Resource": [
+        "${arn_prefix}:logs:${region}:${account_id}:log-group:*",
+        "${destination_arn}"
+      ]
+    },
+    {
+      "Sid": "PassSubscriptionRole",
+      "Effect": "Allow",
+      "Action": [
+        "iam:PassRole"
+      ],
+      "Resource": "${subscription_role_arn}",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "logs.${dns_suffix}"
+        }
+      }
+    }%{ endif }
+  ]
+}

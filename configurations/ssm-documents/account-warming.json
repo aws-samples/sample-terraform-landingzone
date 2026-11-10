@@ -1,0 +1,174 @@
+{
+  "description": "Warm a new account: launch a temporary EC2 instance in a throwaway VPC, keep it running for the warm duration, then remove everything and set the pre-warmed flag. Cleanup runs only on the success path: no step routes a failure to cleanup, so if any step fails or the run is cancelled the automation stops where it is, the flag stays false, and the temporary instance, subnet or VPC it already created stays behind. Find them by the tag Name=tlz-account-warming-temporary and delete them by hand (instance, then subnet, then VPC) before running again. Run this automation IN the target account (the document is shared to every warm-marked account). The temporary instance activates the account's EC2 service so the first production workload does not hit cold-account throttling.",
+  "schemaVersion": "0.3",
+  "assumeRole": "{{ AutomationAssumeRole }}",
+  "parameters": {
+    "AutomationAssumeRole": {
+      "type": "String",
+      "default": "",
+      "description": "(Optional) IAM role ARN the automation assumes in the target account. Leave empty to run with the caller's permissions."
+    },
+    "InstanceType": {
+      "type": "String",
+      "default": "t3.micro",
+      "allowedValues": ["t2.micro", "t3.micro", "t3a.micro"],
+      "description": "Instance type of the temporary warming instance. Deliberately limited to small x86 types matching the Amazon Linux 2023 x86_64 AMI the document resolves."
+    },
+    "WarmDuration": {
+      "type": "String",
+      "default": "PT15M",
+      "allowedPattern": "^PT([1-9]|[1-5][0-9])M$",
+      "description": "How long the instance runs before termination, as an ISO 8601 duration between PT1M and PT59M. The reference procedure uses 15 minutes."
+    },
+    "SsmPrefix": {
+      "type": "String",
+      "default": "/tlz",
+      "allowedPattern": "^/[a-zA-Z0-9_.\\-/]+$",
+      "description": "Parameter prefix for the pre-warmed flag; the flag is written to <SsmPrefix>/account/pre-warmed."
+    }
+  },
+  "mainSteps": [
+    {
+      "name": "resolveAmi",
+      "action": "aws:executeAwsApi",
+      "inputs": {
+        "Service": "ssm",
+        "Api": "GetParameter",
+        "Name": "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+      },
+      "outputs": [
+        { "Name": "AmiId", "Selector": "$.Parameter.Value", "Type": "String" }
+      ]
+    },
+    {
+      "name": "markWarming",
+      "action": "aws:executeAwsApi",
+      "inputs": {
+        "Service": "ssm",
+        "Api": "PutParameter",
+        "Name": "{{ SsmPrefix }}/account/pre-warmed",
+        "Value": "false",
+        "Type": "String",
+        "Overwrite": true,
+        "Description": "Account warming flag: false while the warming run is in progress, true once completed."
+      }
+    },
+    {
+      "name": "createVpc",
+      "action": "aws:executeAwsApi",
+      "inputs": {
+        "Service": "ec2",
+        "Api": "CreateVpc",
+        "CidrBlock": "10.10.0.0/24",
+        "TagSpecifications": [
+          {
+            "ResourceType": "vpc",
+            "Tags": [{ "Key": "Name", "Value": "tlz-account-warming-temporary" }]
+          }
+        ]
+      },
+      "outputs": [
+        { "Name": "VpcId", "Selector": "$.Vpc.VpcId", "Type": "String" }
+      ]
+    },
+    {
+      "name": "createSubnet",
+      "action": "aws:executeAwsApi",
+      "inputs": {
+        "Service": "ec2",
+        "Api": "CreateSubnet",
+        "VpcId": "{{ createVpc.VpcId }}",
+        "CidrBlock": "10.10.0.0/24",
+        "TagSpecifications": [
+          {
+            "ResourceType": "subnet",
+            "Tags": [{ "Key": "Name", "Value": "tlz-account-warming-temporary" }]
+          }
+        ]
+      },
+      "outputs": [
+        { "Name": "SubnetId", "Selector": "$.Subnet.SubnetId", "Type": "String" }
+      ]
+    },
+    {
+      "name": "runInstance",
+      "action": "aws:executeAwsApi",
+      "inputs": {
+        "Service": "ec2",
+        "Api": "RunInstances",
+        "ImageId": "{{ resolveAmi.AmiId }}",
+        "InstanceType": "{{ InstanceType }}",
+        "MinCount": 1,
+        "MaxCount": 1,
+        "SubnetId": "{{ createSubnet.SubnetId }}",
+        "TagSpecifications": [
+          {
+            "ResourceType": "instance",
+            "Tags": [{ "Key": "Name", "Value": "tlz-account-warming-temporary" }]
+          }
+        ]
+      },
+      "outputs": [
+        { "Name": "InstanceId", "Selector": "$.Instances[0].InstanceId", "Type": "String" }
+      ]
+    },
+    {
+      "name": "warmDuration",
+      "action": "aws:sleep",
+      "inputs": { "Duration": "{{ WarmDuration }}" }
+    },
+    {
+      "name": "terminateInstance",
+      "action": "aws:executeAwsApi",
+      "inputs": {
+        "Service": "ec2",
+        "Api": "TerminateInstances",
+        "InstanceIds": ["{{ runInstance.InstanceId }}"]
+      }
+    },
+    {
+      "name": "waitInstanceTerminated",
+      "action": "aws:waitForAwsResourceProperty",
+      "timeoutSeconds": 600,
+      "inputs": {
+        "Service": "ec2",
+        "Api": "DescribeInstances",
+        "InstanceIds": ["{{ runInstance.InstanceId }}"],
+        "PropertySelector": "$.Reservations[0].Instances[0].State.Name",
+        "DesiredValues": ["terminated"]
+      }
+    },
+    {
+      "name": "deleteSubnet",
+      "action": "aws:executeAwsApi",
+      "inputs": {
+        "Service": "ec2",
+        "Api": "DeleteSubnet",
+        "SubnetId": "{{ createSubnet.SubnetId }}"
+      }
+    },
+    {
+      "name": "deleteVpc",
+      "action": "aws:executeAwsApi",
+      "inputs": {
+        "Service": "ec2",
+        "Api": "DeleteVpc",
+        "VpcId": "{{ createVpc.VpcId }}"
+      }
+    },
+    {
+      "name": "markWarmed",
+      "action": "aws:executeAwsApi",
+      "isEnd": true,
+      "inputs": {
+        "Service": "ssm",
+        "Api": "PutParameter",
+        "Name": "{{ SsmPrefix }}/account/pre-warmed",
+        "Value": "true",
+        "Type": "String",
+        "Overwrite": true,
+        "Description": "Account warming flag: false while the warming run is in progress, true once completed."
+      }
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowSourceBucketReplication",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetReplicationConfiguration",
+        "s3:ListBucket"
+      ],
+      "Resource": "${source_bucket_arn}"
+    },
+    {
+      "Sid": "AllowSourceObjectReplication",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObjectVersionForReplication",
+        "s3:GetObjectVersionAcl",
+        "s3:GetObjectVersionTagging"
+      ],
+      "Resource": "${source_bucket_arn}/*"
+    },
+    {
+      "Sid": "AllowDestinationReplication",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ReplicateObject",
+        "s3:ReplicateDelete",
+        "s3:ReplicateTags"
+      ],
+      "Resource": "${destination_bucket_arn}/*"
+    },
+    {
+      "Sid": "AllowSourceKMSDecrypt",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt"
+      ],
+      "Resource": "${source_kms_key_arn}"
+    },
+    {
+      "Sid": "AllowDestinationKMSEncrypt",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Encrypt"
+      ],
+      "Resource": "${destination_kms_key_arn}"
+    }
+  ]
+}

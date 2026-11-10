@@ -1,0 +1,53 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowS3Delivery",
+      "Effect": "Allow",
+      "Action": [
+        "s3:AbortMultipartUpload",
+        "s3:GetBucketLocation",
+        "s3:GetObject",
+        "s3:ListBucket",
+        "s3:ListBucketMultipartUploads",
+        "s3:PutObject"
+      ],
+      "Resource": [
+        "${s3_bucket_arn}",
+        "${s3_bucket_arn}/*"
+      ]
+    },
+    {
+      "Sid": "AllowKinesisRead",
+      "Effect": "Allow",
+      "Action": [
+        "kinesis:DescribeStream",
+        "kinesis:GetShardIterator",
+        "kinesis:GetRecords",
+        "kinesis:ListShards"
+      ],
+      "Resource": ["${kinesis_stream_arn}"]
+    },
+    {
+      "Sid": "AllowKMSDecryptEncrypt",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt",
+        "kms:GenerateDataKey"
+      ],
+      "Resource": ["${kms_key_arn}"]
+    }%{ if lambda_processor_arn != "" },
+    {
+      "Sid": "AllowLambdaProcessorInvoke",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:InvokeFunction",
+        "lambda:GetFunctionConfiguration"
+      ],
+      "Resource": [
+        "${lambda_processor_arn}",
+        "${lambda_processor_arn}:*"
+      ]
+    }%{ endif }
+  ]
+}

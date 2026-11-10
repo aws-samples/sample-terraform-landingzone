@@ -1,0 +1,100 @@
+{
+  "plans": {
+    "Continuous": {
+      "regions": { "@@assign": ["@@region@@"] },
+      "rules": {
+        "ContinuousBackup": {
+          "lifecycle": { "delete_after_days": { "@@assign": 35 } },
+          "target_backup_vault_name": { "@@assign": "Default" },
+          "enable_continuous_backup": { "@@assign": true },
+          "schedule_expression": { "@@assign": "cron(0 0/1 ? * * *)" }
+        }
+      },
+      "selections": {
+        "tags": {
+          "ContinuousBackup": {
+            "iam_role_arn": { "@@assign": "arn:@@partition@@:iam::$account:role/Backup-Role" },
+            "tag_key": { "@@assign": "BackupPlan" },
+            "tag_value": { "@@assign": ["Continuous"] }
+          }
+        }
+      }
+    },
+    "Hourly": {
+      "regions": { "@@assign": ["@@region@@"] },
+      "rules": {
+        "HourlyBackup": {
+          "lifecycle": { "delete_after_days": { "@@assign": 7 } },
+          "target_backup_vault_name": { "@@assign": "Default" },
+          "schedule_expression": { "@@assign": "cron(0 0/1 ? * * *)" }
+        }
+      },
+      "selections": {
+        "tags": {
+          "HourlyBackup": {
+            "iam_role_arn": { "@@assign": "arn:@@partition@@:iam::$account:role/Backup-Role" },
+            "tag_key": { "@@assign": "BackupPlan" },
+            "tag_value": { "@@assign": ["Hourly"] }
+          }
+        }
+      }
+    },
+    "Daily": {
+      "regions": { "@@assign": ["@@region@@"] },
+      "rules": {
+        "DailyBackup": {
+          "lifecycle": { "delete_after_days": { "@@assign": 35 } },
+          "target_backup_vault_name": { "@@assign": "Default" },
+          "schedule_expression": { "@@assign": "cron(0 5 ? * * *)" }
+        }
+      },
+      "selections": {
+        "tags": {
+          "DailyBackup": {
+            "iam_role_arn": { "@@assign": "arn:@@partition@@:iam::$account:role/Backup-Role" },
+            "tag_key": { "@@assign": "BackupPlan" },
+            "tag_value": { "@@assign": ["Daily"] }
+          }
+        }
+      }
+    },
+    "Weekly": {
+      "regions": { "@@assign": ["@@region@@"] },
+      "rules": {
+        "WeeklyBackup": {
+          "lifecycle": { "delete_after_days": { "@@assign": 90 } },
+          "target_backup_vault_name": { "@@assign": "Default" },
+          "schedule_expression": { "@@assign": "cron(0 5 ? * 1 *)" }
+        }
+      },
+      "selections": {
+        "tags": {
+          "WeeklyBackup": {
+            "iam_role_arn": { "@@assign": "arn:@@partition@@:iam::$account:role/Backup-Role" },
+            "tag_key": { "@@assign": "BackupPlan" },
+            "tag_value": { "@@assign": ["Weekly"] }
+          }
+        }
+      }
+    },
+    "Monthly": {
+      "regions": { "@@assign": ["@@region@@"] },
+      "rules": {
+        "MonthlyBackup": {
+          "lifecycle": { "move_to_cold_storage_after_days": { "@@assign": 90 }, "delete_after_days": { "@@assign": 365 } },
+          "target_backup_vault_name": { "@@assign": "Default" },
+          "schedule_expression": { "@@assign": "cron(0 5 1 * ? *)" }
+        }
+      },
+      "selections": {
+        "tags": {
+          "MonthlyBackup": {
+            "iam_role_arn": { "@@assign": "arn:@@partition@@:iam::$account:role/Backup-Role" },
+            "tag_key": { "@@assign": "BackupPlan" },
+            "tag_value": { "@@assign": ["Monthly"] }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "SSMGetDocument",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetDocument"
+      ],
+      "Resource": "*"
+    }
+%{ if s3_bucket_name != "" ~}
+    ,{
+      "Sid": "S3SessionLogging",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetEncryptionConfiguration"
+      ],
+      "Resource": [
+        "${arn_prefix}:s3:::${s3_bucket_name}",
+        "${arn_prefix}:s3:::${s3_bucket_name}/*"
+      ]
+    }
+%{ endif ~}
+%{ if cloudwatch_log_group != "" ~}
+    ,{
+      "Sid": "CloudWatchSessionLogging",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams"
+      ],
+      "Resource": "${arn_prefix}:logs:*:${account_id}:log-group:${cloudwatch_log_group}:*"
+    }
+%{ endif ~}
+%{ if kms_key_id != "" ~}
+    ,{
+      "Sid": "KMSSessionEncryption",
+      "Effect": "Allow",
+      "Action": [
+        "kms:GenerateDataKey"
+      ],
+      "Resource": "${kms_key_id}"
+    }
+%{ endif ~}
+  ]
+}

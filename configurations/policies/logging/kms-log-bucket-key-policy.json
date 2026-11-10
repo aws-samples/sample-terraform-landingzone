@@ -1,0 +1,140 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EnableRootAccountAccess",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "${arn_prefix}:iam::${account_id}:root"
+      },
+      "Action": "kms:*",
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowCloudTrailEncrypt",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "cloudtrail.${dns_suffix}"
+      },
+      "Action": [
+        "kms:GenerateDataKey*",
+        "kms:DescribeKey"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "kms:EncryptionContext:aws:cloudtrail:arn": "${arn_prefix}:cloudtrail:${region}:${account_id}:trail/*"
+        }
+      }
+    },
+    {
+      "Sid": "AllowCloudTrailSnsTopicEncrypt",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "cloudtrail.${dns_suffix}"
+      },
+      "Action": [
+        "kms:GenerateDataKey*",
+        "kms:Decrypt"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceArn": "${org_trail_arn}"
+        }
+      }
+    },
+    {
+      "Sid": "AllowConfigEncrypt",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "config.${dns_suffix}"
+      },
+      "Action": [
+        "kms:GenerateDataKey*",
+        "kms:Decrypt",
+        "kms:DescribeKey"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowCloudWatchLogsEncrypt",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "logs.${region}.${dns_suffix}"
+      },
+      "Action": [
+        "kms:Encrypt*",
+        "kms:Decrypt*",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:Describe*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowKinesisEncrypt",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "kinesis.${dns_suffix}"
+      },
+      "Action": [
+        "kms:GenerateDataKey*",
+        "kms:Decrypt",
+        "kms:DescribeKey"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowFirehoseEncrypt",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "firehose.${dns_suffix}"
+      },
+      "Action": [
+        "kms:Decrypt",
+        "kms:GenerateDataKey*",
+        "kms:DescribeKey"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowLogDeliveryEncrypt",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "delivery.logs.${dns_suffix}"
+      },
+      "Action": [
+        "kms:Encrypt",
+        "kms:Decrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:DescribeKey"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceAccount": "${account_id}"
+        },
+        "ArnLike": {
+          "aws:SourceArn": "${arn_prefix}:logs:${region}:${account_id}:*"
+        }
+      }
+    },
+    {
+      "Sid": "AllowGuardDutyEncrypt",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "guardduty.${dns_suffix}"
+      },
+      "Action": [
+        "kms:GenerateDataKey*",
+        "kms:Encrypt",
+        "kms:Decrypt",
+        "kms:ReEncrypt*",
+        "kms:DescribeKey"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

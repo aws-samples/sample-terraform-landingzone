@@ -1,0 +1,11 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AssumeDeploymentRoles",
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": ${deployment_role_arns_json}
+    }
+  ]
+}

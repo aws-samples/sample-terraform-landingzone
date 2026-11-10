@@ -1,0 +1,33 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "sns:Publish"
+      ],
+      "Resource": [
+        "${central_topic_arn}"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": [
+        "${arn_prefix}:logs:${region}:${account_id}:log-group:/aws/lambda/tlz-sns-forwarder:*"
+      ]
+    },
+    {
+      "Sid": "DeadLetterQueueAccess",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:SendMessage"
+      ],
+      "Resource": "${dlq_arn}"
+    }
+  ]
+}

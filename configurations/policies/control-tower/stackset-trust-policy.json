@@ -1,0 +1,19 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "${arn_prefix}:iam::${management_account_id}:root"
+      },
+      "Action": "sts:AssumeRole"
+    },
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "cloudformation.${dns_suffix}"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}

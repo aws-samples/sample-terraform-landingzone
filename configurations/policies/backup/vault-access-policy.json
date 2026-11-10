@@ -1,0 +1,17 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowAccountBackupAccess",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": ${principal_arns_json}
+      },
+      "Action": [
+        "backup:CopyIntoBackupVault",
+        "backup:DescribeBackupVault"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowOrganizationPutEvents",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "*"
+      },
+      "Action": [
+        "events:PutEvents"
+      ],
+      "Resource": "${arn_prefix}:events:${region}:${account_id}:event-bus/default",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalOrgID": "${organization_id}"
+        }
+      }
+    }
+  ]
+}

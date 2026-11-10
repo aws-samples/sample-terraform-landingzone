@@ -1,0 +1,1341 @@
+[
+  {
+    "rule_name": "suppress-config-recorder",
+    "rule_order": 100,
+    "description": "Suppress Config.1 findings in every account and region \u2014 Config Recorder is TLZ-managed.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "Config.1"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: Config Recorder is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-config-global-recorder",
+    "rule_order": 110,
+    "description": "Suppress Global Config Recorder findings \u2014 global recording is TLZ-managed.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [],
+      "title": [
+        {
+          "comparison": "CONTAINS",
+          "value": "global resource recording"
+        }
+      ],
+      "type": [
+        {
+          "comparison": "PREFIX",
+          "value": "Software and Configuration Checks"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: Global Config Recorder is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-cloudtrail-trail",
+    "rule_order": 120,
+    "description": "Suppress CloudTrail.1 findings \u2014 organization trail is TLZ-managed.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [
+        {
+          "comparison": "PREFIX",
+          "value": "arn:*:cloudtrail:"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "CloudTrail.1"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: CloudTrail organization trail is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-s3-bucket-policy",
+    "rule_order": 130,
+    "description": "Suppress S3.6 bucket policy findings for TLZ-managed buckets.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [
+        {
+          "comparison": "PREFIX",
+          "value": "arn:*:s3:::tlz-"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "S3.6"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: S3 bucket policy is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-s3-bucket-encryption",
+    "rule_order": 140,
+    "description": "Suppress S3.17 KMS encryption findings for TLZ-managed buckets.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [
+        {
+          "comparison": "PREFIX",
+          "value": "arn:*:s3:::tlz-"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "S3.17"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: S3 bucket encryption is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-s3-bucket-logging",
+    "rule_order": 150,
+    "description": "Suppress S3.9 server access logging findings for TLZ-managed buckets.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [
+        {
+          "comparison": "PREFIX",
+          "value": "arn:*:s3:::tlz-"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "S3.9"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: S3 bucket logging is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-s3-bucket-versioning",
+    "rule_order": 160,
+    "description": "Suppress S3.14 versioning findings for TLZ-managed buckets.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [
+        {
+          "comparison": "PREFIX",
+          "value": "arn:*:s3:::tlz-"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "S3.14"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: S3 bucket versioning is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-s3-bucket-lifecycle",
+    "rule_order": 170,
+    "description": "Suppress S3.13 lifecycle findings for TLZ-managed buckets.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [
+        {
+          "comparison": "PREFIX",
+          "value": "arn:*:s3:::tlz-"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "S3.13"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: S3 bucket lifecycle is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-s3-bucket-public-access",
+    "rule_order": 180,
+    "description": "Suppress S3.1 public access block findings for TLZ-managed buckets.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [
+        {
+          "comparison": "PREFIX",
+          "value": "arn:*:s3:::tlz-"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "S3.1"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: S3 public access block is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-sns-encryption",
+    "rule_order": 190,
+    "description": "Suppress SNS.1 topic encryption findings for TLZ-managed topics.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [
+        {
+          "comparison": "PREFIX",
+          "value": "arn:*:sns:"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "SNS.1"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: SNS topic encryption is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-lambda-findings",
+    "rule_order": 200,
+    "description": "Suppress Lambda function findings for TLZ-managed functions identified by ManagedBy=TLZ tag.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [],
+      "resource_tags": [
+        {
+          "key": "ManagedBy",
+          "value": "TLZ",
+          "comparison": "EQUALS"
+        }
+      ],
+      "type": [
+        {
+          "comparison": "PREFIX",
+          "value": "Software and Configuration Checks"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ],
+      "resource_type": [
+        {
+          "comparison": "EQUALS",
+          "value": "AwsLambdaFunction"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: Lambda function is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-iam-role-findings",
+    "rule_order": 210,
+    "description": "Suppress IAM role findings for TLZ-managed roles identified by ManagedBy=TLZ tag.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [],
+      "resource_tags": [
+        {
+          "key": "ManagedBy",
+          "value": "TLZ",
+          "comparison": "EQUALS"
+        }
+      ],
+      "type": [
+        {
+          "comparison": "PREFIX",
+          "value": "Software and Configuration Checks"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ],
+      "resource_type": [
+        {
+          "comparison": "EQUALS",
+          "value": "AwsIamRole"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: IAM role is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-kms-key-rotation",
+    "rule_order": 220,
+    "description": "Suppress KMS.4 key rotation findings for TLZ-managed keys.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [
+        {
+          "comparison": "PREFIX",
+          "value": "arn:*:kms:"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "KMS.4"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: KMS key rotation is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-cloudwatch-alarm",
+    "rule_order": 230,
+    "description": "Suppress CloudWatch.15 alarm action findings for TLZ-managed alarms.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [
+        {
+          "comparison": "PREFIX",
+          "value": "arn:*:cloudwatch:*:*:alarm:tlz-"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "CloudWatch.15"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: CloudWatch alarm is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-ec2-default-security-group",
+    "rule_order": 240,
+    "description": "Suppress EC2.2 default VPC security group findings for TLZ-managed VPCs \u2014 default SG is restricted by TLZ.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [],
+      "resource_tags": [
+        {
+          "key": "ManagedBy",
+          "value": "TLZ",
+          "comparison": "EQUALS"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "EC2.2"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: Default security group is restricted by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-vpc-flow-logs",
+    "rule_order": 250,
+    "description": "Suppress EC2.6 VPC flow log findings for TLZ-managed VPCs \u2014 flow logs are TLZ-managed.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [],
+      "resource_tags": [
+        {
+          "key": "ManagedBy",
+          "value": "TLZ",
+          "comparison": "EQUALS"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "EC2.6"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: VPC flow logs are managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-guardduty-findings",
+    "rule_order": 260,
+    "description": "Suppress GuardDuty.1 configuration findings \u2014 GuardDuty is TLZ-managed.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "GuardDuty.1"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: GuardDuty is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-securityhub-findings",
+    "rule_order": 270,
+    "description": "Suppress SecurityHub.1 configuration findings \u2014 Security Hub is TLZ-managed.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "SecurityHub.1"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: Security Hub is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-macie-findings",
+    "rule_order": 280,
+    "description": "Suppress Macie.1 configuration findings \u2014 Macie is TLZ-managed.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "Macie.1"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: Macie is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-access-analyzer-findings",
+    "rule_order": 290,
+    "description": "Suppress IAM.28 (external access analyzer enabled) findings \u2014 the TLZ analyzer is an organization analyzer, which this per-account control does not count.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "IAM.28"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: the Terraform Landing Zone runs an organization-wide IAM Access Analyzer, which IAM.28 does not count.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-ebs-encryption",
+    "rule_order": 295,
+    "description": "Suppress EC2.7 EBS default encryption findings \u2014 EBS encryption is TLZ-managed.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "EC2.7"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: EBS default encryption is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-ec2-vpc-endpoints",
+    "rule_order": 300,
+    "description": "Suppress EC2.10 VPC endpoint findings for TLZ-managed VPCs.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [],
+      "resource_tags": [
+        {
+          "key": "ManagedBy",
+          "value": "TLZ",
+          "comparison": "EQUALS"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "EC2.10"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: VPC is managed by TLZ.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-ec2-tgw-auto-accept",
+    "rule_order": 310,
+    "description": "Suppress EC2.23 TGW auto-accept findings for TLZ-managed Transit Gateways.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [],
+      "resource_tags": [
+        {
+          "key": "ManagedBy",
+          "value": "TLZ",
+          "comparison": "EQUALS"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "EC2.23"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: Transit Gateway is managed by TLZ.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-ec2-docker-endpoint",
+    "rule_order": 320,
+    "description": "Suppress EC2.56 Docker registry endpoint findings for TLZ-managed VPCs.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [],
+      "resource_tags": [
+        {
+          "key": "ManagedBy",
+          "value": "TLZ",
+          "comparison": "EQUALS"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "EC2.56"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: VPC is managed by TLZ.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-ec2-ssm-endpoint",
+    "rule_order": 330,
+    "description": "Suppress EC2.57 Systems Manager endpoint findings for TLZ-managed VPCs.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [],
+      "resource_tags": [
+        {
+          "key": "ManagedBy",
+          "value": "TLZ",
+          "comparison": "EQUALS"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "EC2.57"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: VPC is managed by TLZ.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-ec2-incident-contacts-endpoint",
+    "rule_order": 340,
+    "description": "Suppress EC2.58 Incident Manager contacts endpoint findings for TLZ-managed VPCs.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [],
+      "resource_tags": [
+        {
+          "key": "ManagedBy",
+          "value": "TLZ",
+          "comparison": "EQUALS"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "EC2.58"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: VPC is managed by TLZ.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-ec2-incident-endpoint",
+    "rule_order": 350,
+    "description": "Suppress EC2.60 Incident Manager endpoint findings for TLZ-managed VPCs.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [],
+      "resource_tags": [
+        {
+          "key": "ManagedBy",
+          "value": "TLZ",
+          "comparison": "EQUALS"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "EC2.60"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: VPC is managed by TLZ.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-ec2-vpc-bpa",
+    "rule_order": 360,
+    "description": "Suppress EC2.172 VPC Block Public Access findings for TLZ-managed VPCs.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [],
+      "resource_tags": [
+        {
+          "key": "ManagedBy",
+          "value": "TLZ",
+          "comparison": "EQUALS"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "EC2.172"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: VPC Block Public Access is managed by TLZ.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-s3-cross-region-replication",
+    "rule_order": 370,
+    "description": "Suppress S3.7 cross-region replication findings for TLZ-managed buckets.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [
+        {
+          "comparison": "PREFIX",
+          "value": "arn:*:s3:::tlz-"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "S3.7"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: S3 cross-region replication is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-s3-event-notifications",
+    "rule_order": 380,
+    "description": "Suppress S3.11 event notification findings for TLZ-managed buckets.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [
+        {
+          "comparison": "PREFIX",
+          "value": "arn:*:s3:::tlz-"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "S3.11"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: S3 event notifications are managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-s3-object-lock",
+    "rule_order": 390,
+    "description": "Suppress S3.15 object lock findings for TLZ-managed buckets.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [
+        {
+          "comparison": "PREFIX",
+          "value": "arn:*:s3:::tlz-"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "S3.15"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: S3 object lock is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-s3-mfa-delete",
+    "rule_order": 400,
+    "description": "Suppress S3.20 MFA delete findings for TLZ-managed buckets.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [
+        {
+          "comparison": "PREFIX",
+          "value": "arn:*:s3:::tlz-"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "S3.20"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: S3 MFA delete is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-kinesis-retention",
+    "rule_order": 410,
+    "description": "Suppress Kinesis.3 data retention findings for TLZ-managed Kinesis streams.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [
+        {
+          "comparison": "PREFIX",
+          "value": "arn:*:kinesis:*:*:stream/tlz-"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "Kinesis.3"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: Kinesis stream retention is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-kms-decryption-policy",
+    "rule_order": 420,
+    "description": "Suppress KMS.1 key policy findings for TLZ-managed KMS keys.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [],
+      "resource_tags": [
+        {
+          "key": "ManagedBy",
+          "value": "TLZ",
+          "comparison": "EQUALS"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "KMS.1"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: KMS key policy is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  },
+  {
+    "rule_name": "suppress-kms-inline-decryption",
+    "rule_order": 430,
+    "description": "Suppress KMS.2 IAM principal inline decryption findings for TLZ-managed KMS keys.",
+    "is_terminal": true,
+    "criteria": {
+      "resource_id": [],
+      "resource_tags": [
+        {
+          "key": "ManagedBy",
+          "value": "TLZ",
+          "comparison": "EQUALS"
+        }
+      ],
+      "compliance_security_control_id": [
+        {
+          "comparison": "EQUALS",
+          "value": "KMS.2"
+        }
+      ],
+      "product_name": [
+        {
+          "comparison": "EQUALS",
+          "value": "Security Hub"
+        }
+      ]
+    },
+    "actions": {
+      "type": "FINDING_FIELDS_UPDATE",
+      "finding_fields_update": {
+        "workflow": {
+          "status": "SUPPRESSED"
+        },
+        "note": {
+          "text": "Suppressed: KMS key usage is managed by the Terraform Landing Zone.",
+          "updated_by": "TLZ-automation"
+        }
+      }
+    }
+  }
+]

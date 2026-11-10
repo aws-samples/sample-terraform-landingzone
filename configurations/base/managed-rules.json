@@ -1,0 +1,303 @@
+[
+  {
+    "name": "base-iam-user-group-membership-check",
+    "source_identifier": "IAM_USER_GROUP_MEMBERSHIP_CHECK",
+    "resource_types_scope": [
+      "AWS::IAM::User"
+    ],
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-cloudtrail-enabled",
+    "source_identifier": "CLOUD_TRAIL_ENABLED",
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-emr-kerberos-enabled",
+    "source_identifier": "EMR_KERBEROS_ENABLED",
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-s3-bucket-policy-grantee-check",
+    "source_identifier": "S3_BUCKET_POLICY_GRANTEE_CHECK",
+    "resource_types_scope": [
+      "AWS::S3::Bucket"
+    ],
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-ec2-instance-detailed-monitoring-enabled",
+    "source_identifier": "EC2_INSTANCE_DETAILED_MONITORING_ENABLED",
+    "resource_types_scope": [
+      "AWS::EC2::Instance"
+    ],
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-ec2-volume-inuse-check",
+    "source_identifier": "EC2_VOLUME_INUSE_CHECK",
+    "resource_types_scope": [
+      "AWS::EC2::Volume"
+    ],
+    "input_parameters": {
+      "deleteOnTermination": "TRUE"
+    },
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-guardduty-non-archived-findings",
+    "source_identifier": "GUARDDUTY_NON_ARCHIVED_FINDINGS",
+    "input_parameters": {
+      "daysHighSev": "1",
+      "daysLowSev": "30",
+      "daysMediumSev": "7"
+    },
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-sagemaker-endpoint-configuration-kms-key-configured",
+    "source_identifier": "SAGEMAKER_ENDPOINT_CONFIGURATION_KMS_KEY_CONFIGURED",
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-dynamodb-table-encrypted-kms",
+    "source_identifier": "DYNAMODB_TABLE_ENCRYPTED_KMS",
+    "resource_types_scope": [
+      "AWS::DynamoDB::Table"
+    ],
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-account-part-of-organizations",
+    "source_identifier": "ACCOUNT_PART_OF_ORGANIZATIONS",
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-codebuild-project-artifact-encryption",
+    "source_identifier": "CODEBUILD_PROJECT_ARTIFACT_ENCRYPTION",
+    "resource_types_scope": [
+      "AWS::CodeBuild::Project"
+    ],
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-dynamodb-throughput-limit-check",
+    "source_identifier": "DYNAMODB_THROUGHPUT_LIMIT_CHECK",
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-ebs-optimized-instance",
+    "source_identifier": "EBS_OPTIMIZED_INSTANCE",
+    "resource_types_scope": [
+      "AWS::EC2::Instance"
+    ],
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-lambda-dlq-check",
+    "source_identifier": "LAMBDA_DLQ_CHECK",
+    "resource_types_scope": [
+      "AWS::Lambda::Function"
+    ],
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-secretsmanager-using-cmk",
+    "source_identifier": "SECRETSMANAGER_USING_CMK",
+    "resource_types_scope": [
+      "AWS::SecretsManager::Secret"
+    ],
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-api-gw-cache-enabled-and-encrypted",
+    "source_identifier": "API_GW_CACHE_ENABLED_AND_ENCRYPTED",
+    "resource_types_scope": [
+      "AWS::ApiGateway::Stage"
+    ],
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-ebs-in-backup-plan",
+    "source_identifier": "EBS_IN_BACKUP_PLAN",
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-ec2-instances-in-vpc",
+    "source_identifier": "INSTANCES_IN_VPC",
+    "resource_types_scope": [
+      "AWS::EC2::Instance"
+    ],
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-rds-in-backup-plan",
+    "source_identifier": "RDS_IN_BACKUP_PLAN",
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-aurora-resources-protected-by-backup-plan",
+    "source_identifier": "AURORA_RESOURCES_PROTECTED_BY_BACKUP_PLAN",
+    "resource_types_scope": [
+      "AWS::RDS::DBCluster"
+    ],
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-backup-recovery-point-encrypted",
+    "source_identifier": "BACKUP_RECOVERY_POINT_ENCRYPTED",
+    "resource_types_scope": [
+      "AWS::Backup::RecoveryPoint"
+    ],
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-ec2-instance-profile-attached",
+    "source_identifier": "EC2_INSTANCE_PROFILE_ATTACHED",
+    "resource_types_scope": [
+      "AWS::EC2::Instance"
+    ],
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-iam-group-has-users-check",
+    "source_identifier": "IAM_GROUP_HAS_USERS_CHECK",
+    "resource_types_scope": [
+      "AWS::IAM::Group"
+    ],
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-iam-no-inline-policy-check",
+    "source_identifier": "IAM_NO_INLINE_POLICY_CHECK",
+    "resource_types_scope": [
+      "AWS::IAM::User",
+      "AWS::IAM::Role",
+      "AWS::IAM::Group"
+    ],
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-cloudwatch-log-group-encrypted",
+    "source_identifier": "CLOUDWATCH_LOG_GROUP_ENCRYPTED",
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-sagemaker-notebook-instance-kms-key-configured",
+    "source_identifier": "SAGEMAKER_NOTEBOOK_INSTANCE_KMS_KEY_CONFIGURED",
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-no-unrestricted-route-to-igw",
+    "source_identifier": "NO_UNRESTRICTED_ROUTE_TO_IGW",
+    "resource_types_scope": [
+      "AWS::EC2::RouteTable"
+    ],
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-backup-plan-min-frequency-and-min-retention-check",
+    "source_identifier": "BACKUP_PLAN_MIN_FREQUENCY_AND_MIN_RETENTION_CHECK",
+    "resource_types_scope": [
+      "AWS::Backup::BackupPlan"
+    ],
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-backup-recovery-point-manual-deletion-disabled",
+    "source_identifier": "BACKUP_RECOVERY_POINT_MANUAL_DELETION_DISABLED",
+    "resource_types_scope": [
+      "AWS::Backup::BackupVault"
+    ],
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-ec2-resources-protected-by-backup-plan",
+    "source_identifier": "EC2_RESOURCES_PROTECTED_BY_BACKUP_PLAN",
+    "resource_types_scope": [
+      "AWS::EC2::Instance"
+    ],
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-elb-logging-enabled",
+    "source_identifier": "ELB_LOGGING_ENABLED",
+    "resource_types_scope": [
+      "AWS::ElasticLoadBalancing::LoadBalancer",
+      "AWS::ElasticLoadBalancingV2::LoadBalancer"
+    ],
+    "input_parameters": {
+      "s3BucketNames": "__ELB_LOG_BUCKET__"
+    },
+    "excluded_accounts": [],
+    "deployment_targets": []
+  },
+  {
+    "name": "base-internet-gateway-authorized-vpc-only",
+    "source_identifier": "INTERNET_GATEWAY_AUTHORIZED_VPC_ONLY",
+    "resource_types_scope": [
+      "AWS::EC2::InternetGateway"
+    ],
+    "input_parameters": {},
+    "excluded_accounts": [],
+    "deployment_targets": []
+  }
+]

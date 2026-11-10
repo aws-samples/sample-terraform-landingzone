@@ -1,0 +1,17 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowEventBridgeWriteLogs",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "events.${dns_suffix}"
+      },
+      "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": ${log_group_arns_json}
+    }
+  ]
+}

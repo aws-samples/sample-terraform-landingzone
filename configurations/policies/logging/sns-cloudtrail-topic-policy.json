@@ -1,0 +1,19 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowCloudTrailPublish",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "cloudtrail.${dns_suffix}"
+      },
+      "Action": "SNS:Publish",
+      "Resource": "${sns_topic_arn}",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceArn": "${cloudtrail_arn}"
+        }
+      }
+    }
+  ]
+}

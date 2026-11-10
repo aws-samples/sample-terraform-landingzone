@@ -1,0 +1,23 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowSSMS3Access",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:ListBucket", "s3:GetBucketLocation"],
+      "Resource": [
+        "arn:*:s3:::aws-ssm-*", "arn:*:s3:::aws-ssm-*/*",
+        "arn:*:s3:::amazon-ssm-*", "arn:*:s3:::amazon-ssm-*/*",
+        "arn:*:s3:::patch-baseline-snapshot-*", "arn:*:s3:::patch-baseline-snapshot-*/*",
+        "arn:*:s3:::aws-ssm-distributor-*", "arn:*:s3:::aws-ssm-distributor-*/*",
+        "arn:*:s3:::aws-ssm-document-*", "arn:*:s3:::aws-ssm-document-*/*",
+        "arn:*:s3:::amazonlinux-*", "arn:*:s3:::amazonlinux-*/*",
+        "arn:*:s3:::aws-windows-*", "arn:*:s3:::aws-windows-*/*",
+        "arn:*:s3:::amazon-linux-*", "arn:*:s3:::amazon-linux-*/*",
+        "arn:*:s3:::aws-patchmanager-*", "arn:*:s3:::aws-patchmanager-*/*",
+        "arn:*:s3:::aws-ssm-association-*", "arn:*:s3:::aws-ssm-association-*/*",
+        "arn:*:s3:::aws-ssm-compliance-*", "arn:*:s3:::aws-ssm-compliance-*/*"
+      ]
+    }
+  ]
+}

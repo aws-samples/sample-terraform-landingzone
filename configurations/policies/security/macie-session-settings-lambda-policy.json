@@ -1,0 +1,27 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "MacieSessionSettings",
+      "Effect": "Allow",
+      "Action": [
+        "macie2:UpdateAutomatedDiscoveryConfiguration",
+        "macie2:ListClassificationScopes",
+        "macie2:UpdateClassificationScope",
+        "macie2:GetFindingsPublicationConfiguration",
+        "macie2:PutFindingsPublicationConfiguration"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "FunctionLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "${log_group_arn}"
+    }
+  ]
+}

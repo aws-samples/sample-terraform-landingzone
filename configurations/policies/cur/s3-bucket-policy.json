@@ -1,0 +1,54 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowCURDelivery",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "billingreports.${dns_suffix}"
+      },
+      "Action": [
+        "s3:GetBucketAcl",
+        "s3:GetBucketPolicy"
+      ],
+      "Resource": "${bucket_arn}",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceAccount": "${account_id}",
+          "aws:SourceArn": "${arn_prefix}:cur:us-east-1:${account_id}:definition/*"
+        }
+      }
+    },
+    {
+      "Sid": "AllowCURWrite",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "billingreports.${dns_suffix}"
+      },
+      "Action": "s3:PutObject",
+      "Resource": "${bucket_arn}/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceAccount": "${account_id}"
+        }
+      }
+    },
+    {
+      "Sid": "DenyUnencryptedTransport",
+      "Effect": "Deny",
+      "Principal": {
+        "AWS": "*"
+      },
+      "Action": "s3:*",
+      "Resource": [
+        "${bucket_arn}",
+        "${bucket_arn}/*"
+      ],
+      "Condition": {
+        "Bool": {
+          "aws:SecureTransport": "false"
+        }
+      }
+    }
+  ]
+}

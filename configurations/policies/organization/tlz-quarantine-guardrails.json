@@ -1,0 +1,21 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyAllAWSServicesExceptProvisioningRoles",
+      "Effect": "Deny",
+      "Action": "*",
+      "Resource": "*",
+      "Condition": {
+        "ArnNotLike": {
+          "aws:PrincipalArn": [
+            "arn:*:iam::*:role/AWSControlTowerExecution",
+            "arn:*:iam::*:role/TLZDeploymentRole",
+            "arn:*:iam::*:role/tlz-*",
+            "arn:*:iam::*:role/OrganizationAccountAccessRole"
+          ]
+        }
+      }
+    }
+  ]
+}

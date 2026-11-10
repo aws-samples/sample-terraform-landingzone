@@ -1,0 +1,135 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyExternalS3Write",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": [
+        "s3:PutObject*",
+        "s3:DeleteObject*",
+        "s3:AbortMultipartUpload",
+        "s3:RestoreObject",
+        "s3:InitiateReplication",
+        "s3:PutReplicationConfiguration",
+        "s3:CreateBucket",
+        "s3:DeleteBucket",
+        "s3:PutBucketPolicy",
+        "s3:DeleteBucketPolicy"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "BoolIfExists": {
+          "aws:PrincipalIsAWSService": "false"
+        },
+        "StringNotEqualsIfExists": {
+          "aws:PrincipalOrgID": "@@organization_id@@"
+        }
+      }
+    },
+    {
+      "Sid": "ConfusedDeputyProtection",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": [
+        "s3:*",
+        "sqs:*",
+        "kms:*",
+        "secretsmanager:*",
+        "sts:*"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEqualsIfExists": {
+          "aws:SourceOrgID": "@@organization_id@@"
+        },
+        "Bool": {
+          "aws:PrincipalIsAWSService": "true"
+        },
+        "Null": {
+          "aws:SourceArn": "false"
+        }
+      }
+    },
+    {
+      "Sid": "SecureTransportEnforcement",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": [
+        "sts:*",
+        "s3:*",
+        "sqs:*",
+        "secretsmanager:*",
+        "kms:*"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "BoolIfExists": {
+          "aws:SecureTransport": "false"
+        }
+      }
+    },
+    {
+      "Sid": "KMSKeyProtection",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": [
+        "kms:CancelKeyDeletion",
+        "kms:DeleteAlias",
+        "kms:DisableKey",
+        "kms:DisableKeyRotation",
+        "kms:EnableKey",
+        "kms:ImportKeyMaterial",
+        "kms:PutKeyPolicy",
+        "kms:ScheduleKeyDeletion",
+        "kms:TagResource",
+        "kms:UntagResource",
+        "kms:UpdateAlias",
+        "kms:UpdateKeyDescription"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/ManagedBy": "TLZ"
+        },
+        "ArnNotLike": {
+          "aws:PrincipalARN": [
+            "arn:*:iam::*:role/TLZDeploymentRole",
+            "arn:*:iam::*:role/tlz-*",
+            "arn:*:iam::*:role/AWSControlTowerExecution",
+            "arn:*:iam::*:role/stacksets-exec-*",
+            "arn:*:iam::*:role/OrganizationAccountAccessRole"
+          ]
+        },
+        "BoolIfExists": {
+          "aws:PrincipalIsAWSService": "false"
+        }
+      }
+    },
+    {
+      "Sid": "ControlTowerLogBucketProtection",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": [
+        "s3:DeleteObject",
+        "s3:GetObject",
+        "s3:PutObject"
+      ],
+      "Resource": "arn:*:s3:::aws-controltower-logs-@@log_archive_account_id@@-@@home_region@@/*",
+      "Condition": {
+        "ForAllValues:StringNotEquals": {
+          "aws:CalledVia": [
+            "config.@@dns_suffix@@",
+            "cloudtrail.@@dns_suffix@@"
+          ]
+        },
+        "ArnNotLike": {
+          "aws:PrincipalARN": "arn:*:iam::*:role/AWSControlTowerExecution"
+        },
+        "BoolIfExists": {
+          "aws:PrincipalIsAWSService": "false"
+        }
+      }
+    }
+  ]
+}

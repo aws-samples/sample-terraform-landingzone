@@ -1,0 +1,32 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+%{ if pipeline_type == "codepipeline" ~}
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "codebuild.${dns_suffix}"
+      },
+      "Action": "sts:AssumeRole"
+    }
+%{ endif ~}
+%{ if pipeline_type == "ecs" ~}
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "ecs-tasks.${dns_suffix}"
+      },
+      "Action": "sts:AssumeRole"
+    }
+%{ endif ~}
+%{ if pipeline_type == "external" ~}
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "${arn_prefix}:iam::${account_id}:root"
+      },
+      "Action": "sts:AssumeRole"
+    }
+%{ endif ~}
+  ]
+}

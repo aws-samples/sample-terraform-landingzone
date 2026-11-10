@@ -1,0 +1,232 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ProtectIAMRoles",
+      "Effect": "Deny",
+      "NotAction": [
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListRolePolicies",
+        "iam:ListRoles"
+      ],
+      "Resource": [
+        "arn:*:iam::*:role/TLZDeploymentRole",
+        "arn:*:iam::*:role/TLZPipelineRole",
+        "arn:*:iam::*:role/TLZCodeBuildServiceRole",
+        "arn:*:iam::*:role/TLZECSTaskRole",
+        "arn:*:iam::*:role/TLZExternalCIRole",
+        "arn:*:iam::*:role/tlz-*",
+        "arn:*:iam::*:role/AWSControlTowerExecution",
+        "arn:*:iam::*:role/stacksets-exec-*",
+        "arn:*:iam::*:role/OrganizationAccountAccessRole"
+      ],
+      "Condition": {
+        "ArnNotLike": {
+          "aws:PrincipalARN": [
+            "arn:*:iam::*:role/TLZDeploymentRole",
+            "arn:*:iam::*:role/TLZPipelineRole",
+            "arn:*:iam::*:role/TLZCodeBuildServiceRole",
+            "arn:*:iam::*:role/TLZECSTaskRole",
+            "arn:*:iam::*:role/TLZExternalCIRole",
+            "arn:*:iam::*:role/tlz-*",
+            "arn:*:iam::*:role/AWSControlTowerExecution",
+            "arn:*:iam::*:role/stacksets-exec-*",
+            "arn:*:iam::*:role/OrganizationAccountAccessRole"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ProtectIAMRoleTags",
+      "Effect": "Deny",
+      "Action": [
+        "iam:UntagRole",
+        "iam:TagRole",
+        "iam:DeleteRole",
+        "iam:UpdateRole"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/ManagedBy": "TLZ"
+        },
+        "StringNotLike": {
+          "aws:PrincipalArn": [
+            "arn:*:iam::*:role/TLZDeploymentRole",
+            "arn:*:iam::*:role/tlz-*",
+            "arn:*:iam::*:role/AWSControlTowerExecution",
+            "arn:*:iam::*:role/stacksets-exec-*",
+            "arn:*:iam::*:role/OrganizationAccountAccessRole"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ProtectCloudFormationStacks",
+      "Effect": "Deny",
+      "Action": [
+        "cloudformation:DeleteStack",
+        "cloudformation:UpdateStack"
+      ],
+      "Resource": "arn:*:cloudformation:*:*:stack/tlz-*",
+      "Condition": {
+        "StringNotLike": {
+          "aws:PrincipalArn": [
+            "arn:*:iam::*:role/TLZDeploymentRole",
+            "arn:*:iam::*:role/tlz-*",
+            "arn:*:iam::*:role/AWSControlTowerExecution",
+            "arn:*:iam::*:role/stacksets-exec-*",
+            "arn:*:iam::*:role/OrganizationAccountAccessRole"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ProtectSSMParameters",
+      "Effect": "Deny",
+      "Action": [
+        "ssm:DeleteParameter",
+        "ssm:DeleteParameters",
+        "ssm:PutParameter"
+      ],
+      "Resource": "arn:*:ssm:*:*:parameter/tlz/*",
+      "Condition": {
+        "StringNotLike": {
+          "aws:PrincipalArn": [
+            "arn:*:iam::*:role/TLZDeploymentRole",
+            "arn:*:iam::*:role/tlz-*",
+            "arn:*:iam::*:role/AWSControlTowerExecution",
+            "arn:*:iam::*:role/stacksets-exec-*",
+            "arn:*:iam::*:role/OrganizationAccountAccessRole"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ProtectS3Buckets",
+      "Effect": "Deny",
+      "Action": [
+        "s3:DeleteBucket",
+        "s3:DeleteBucketPolicy",
+        "s3:PutBucketLogging",
+        "s3:PutBucketPolicy",
+        "s3:PutBucketVersioning",
+        "s3:PutEncryptionConfiguration",
+        "s3:PutLifecycleConfiguration",
+        "s3:PutObjectRetention",
+        "s3:PutObjectTagging",
+        "s3:PutReplicationConfiguration",
+        "s3:ReplicateDelete"
+      ],
+      "Resource": "arn:*:s3:::tlz-*",
+      "Condition": {
+        "StringNotLike": {
+          "aws:PrincipalArn": [
+            "arn:*:iam::*:role/TLZDeploymentRole",
+            "arn:*:iam::*:role/tlz-*",
+            "arn:*:iam::*:role/AWSControlTowerExecution",
+            "arn:*:iam::*:role/stacksets-exec-*",
+            "arn:*:iam::*:role/OrganizationAccountAccessRole"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DenyRootAccount",
+      "Effect": "Deny",
+      "Action": "*",
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "aws:PrincipalArn": "arn:*:iam::*:root"
+        }
+      }
+    },
+    {
+      "Sid": "ProtectSecurityServicesCore",
+      "Effect": "Deny",
+      "Action": [
+        "account:DisableRegion",
+        "account:EnableRegion",
+        "ec2:CreateDefaultVpc",
+        "guardduty:AcceptInvitation",
+        "guardduty:CreateMembers",
+        "guardduty:DeleteDetector",
+        "guardduty:DeleteMembers",
+        "guardduty:Disassociate*",
+        "guardduty:StopMonitoringMembers",
+        "guardduty:UpdateDetector",
+        "guardduty:UpdateFindingsFeedback",
+        "guardduty:UpdateOrganizationConfiguration",
+        "guardduty:UpdatePublishingDestination",
+        "iam:CreateAccountAlias",
+        "iam:DeleteAccountAlias",
+        "macie2:AcceptInvitation",
+        "macie2:CreateInvitations",
+        "macie2:CreateMember",
+        "macie2:DeleteMember",
+        "macie2:DisableMacie",
+        "macie2:Disassociate*",
+        "macie2:Enable*",
+        "macie2:UpdateMacieSession",
+        "macie2:UpdateMemberSession",
+        "macie2:UpdateOrganizationConfiguration",
+        "securityhub:AcceptInvitation",
+        "securityhub:BatchDisableStandards",
+        "securityhub:CreateMembers",
+        "securityhub:DeleteActionTarget",
+        "securityhub:DeleteInsight",
+        "securityhub:DeleteInvitations",
+        "securityhub:DeleteMembers",
+        "securityhub:DisableSecurityHub",
+        "securityhub:Disassociate*",
+        "securityhub:InviteMembers",
+        "securityhub:UpdateSecurityHubConfiguration",
+        "securityhub:UpdateStandardsControl"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotLike": {
+          "aws:PrincipalArn": [
+            "arn:*:iam::*:role/TLZDeploymentRole",
+            "arn:*:iam::*:role/tlz-*",
+            "arn:*:iam::*:role/AWSControlTowerExecution",
+            "arn:*:iam::*:role/stacksets-exec-*",
+            "arn:*:iam::*:role/OrganizationAccountAccessRole"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ProtectAccessAnalyzerAndRAM",
+      "Effect": "Deny",
+      "Action": [
+        "access-analyzer:DeleteAnalyzer",
+        "ram:DeleteResourceShare",
+        "ram:DisassociateResourceShare",
+        "ram:UpdateResourceShare",
+        "ec2:DisableEbsEncryptionByDefault",
+        "ec2:ModifyEbsDefaultKmsKeyId",
+        "iam:DeleteAccountPasswordPolicy",
+        "iam:UpdateAccountPasswordPolicy",
+        "iam:CreateUser",
+        "s3:PutAccountPublicAccessBlock",
+        "organizations:LeaveOrganization"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotLike": {
+          "aws:PrincipalArn": [
+            "arn:*:iam::*:role/TLZDeploymentRole",
+            "arn:*:iam::*:role/tlz-*",
+            "arn:*:iam::*:role/AWSControlTowerExecution",
+            "arn:*:iam::*:role/stacksets-exec-*",
+            "arn:*:iam::*:role/OrganizationAccountAccessRole"
+          ]
+        }
+      }
+    }
+  ]
+}

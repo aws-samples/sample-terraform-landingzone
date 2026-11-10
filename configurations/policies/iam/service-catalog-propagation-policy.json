@@ -1,0 +1,23 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "servicecatalog:ListPortfolios",
+        "servicecatalog:ListPortfolioAccess",
+        "servicecatalog:SearchProductsAsAdmin",
+        "servicecatalog:ListProvisioningArtifacts",
+        "servicecatalog:DescribePortfolio",
+        "servicecatalog:DescribeProduct",
+        "servicecatalog:DescribeProvisioningArtifact",
+        "servicecatalog:AssociatePrincipalWithPortfolio",
+        "servicecatalog:DisassociatePrincipalFromPortfolio",
+        "servicecatalog:CreatePortfolioShare",
+        "servicecatalog:DeletePortfolioShare",
+        "servicecatalog:AcceptPortfolioShare"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

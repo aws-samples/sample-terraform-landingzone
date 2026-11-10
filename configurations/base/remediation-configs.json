@@ -1,0 +1,48 @@
+[
+  {
+    "rule_name": "base-ec2-instance-profile-attached",
+    "target_id": "tlz-attach-instance-profile",
+    "target_type": "SSM_DOCUMENT",
+    "parameters": {
+      "InstanceId": {
+        "resource_value": "RESOURCE_ID"
+      },
+      "IamInstanceProfile": {
+        "static_values": [
+          "__REMEDIATION_INSTANCE_PROFILE__"
+        ]
+      },
+      "AutomationAssumeRole": {
+        "static_values": [
+          "__REMEDIATION_ASSUME_ROLE_ARN__"
+        ]
+      }
+    },
+    "automatic": true,
+    "maximum_automatic_attempts": 5,
+    "retry_attempt_seconds": 60
+  },
+  {
+    "rule_name": "base-elb-logging-enabled",
+    "target_id": "tlz-enable-elb-logging",
+    "target_type": "SSM_DOCUMENT",
+    "parameters": {
+      "LoadBalancerArn": {
+        "resource_value": "RESOURCE_ID"
+      },
+      "LogDestination": {
+        "static_values": [
+          "__ELB_LOG_BUCKET__"
+        ]
+      },
+      "AutomationAssumeRole": {
+        "static_values": [
+          "__REMEDIATION_ASSUME_ROLE_ARN__"
+        ]
+      }
+    },
+    "automatic": true,
+    "maximum_automatic_attempts": 5,
+    "retry_attempt_seconds": 60
+  }
+]

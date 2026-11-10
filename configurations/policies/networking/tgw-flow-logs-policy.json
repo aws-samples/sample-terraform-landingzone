@@ -1,0 +1,15 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "logs:DescribeLogGroups"
+      ],
+      "Effect": "Allow",
+      "Resource": "${arn_prefix}:logs:${region}:${account_id}:log-group:/tgw/flow-logs:*"
+    }
+  ]
+}

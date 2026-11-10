@@ -1,0 +1,17 @@
+[
+  {
+    "name": "base-securityhub-enabled",
+    "source_identifier": "SECURITYHUB_ENABLED",
+    "input_parameters": {}
+  },
+  {
+    "name": "base-cloudtrail-s3-dataevents-enabled",
+    "source_identifier": "CLOUDTRAIL_S3_DATAEVENTS_ENABLED",
+    "input_parameters": {}
+  },
+  {
+    "name": "base-cloudtrail-security-trail-enabled",
+    "source_identifier": "CLOUDTRAIL_SECURITY_TRAIL_ENABLED",
+    "input_parameters": {}
+  }
+]
