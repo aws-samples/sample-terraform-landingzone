@@ -66,6 +66,18 @@ inputs = {
     ? local.accounts.locals.audit_account_id
     : lookup(dependency.accounts.outputs.account_ids, "Audit", "")
   )
+  # The finding consumers (GuardDuty export, Macie export, finding aggregator,
+  # automation rules) run in the Audit account — stacks/audit/security-org-config
+  # — while security_finding_consumers_in_audit (default true) is on and the
+  # Audit account resolves; this unit then creates none of its own. On a first
+  # plan before the accounts exist, and with the switch false, they stay here.
+  manage_finding_consumers = !(
+    try(local.common.locals.security_finding_consumers_in_audit, true) && (
+      local.accounts.locals.audit_account_id != ""
+      ? local.accounts.locals.audit_account_id
+      : lookup(dependency.accounts.outputs.account_ids, "Audit", "")
+    ) != ""
+  )
   # Service switches from the loader (OR across base.tfvars, env/common.hcl and
   # the enabled frameworks). Macie additionally goes through the loader's
   # partition filter, which switches it off in aws-eusc.
@@ -152,10 +164,11 @@ inputs = {
   # pattern of stacks/management/config-rules). Neither value belongs in a
   # configuration file: ou_name_to_id is an output of the organization stack,
   # and the account-to-OU assignment comes from the accounts module, which
-  # derives it from parent_id per account and publishes it as
-  # active_account_ou_ids (warm accounts excluded — they are no deployment
-  # targets). Accounts that this landing zone does not create are not in that
-  # output and therefore not resolvable through an OU name.
+  # publishes each account's declared OU as active_account_ou_ids (warm and
+  # suspended accounts excluded — they are no deployment targets; a
+  # quarantined account keeps its declared OU there). Accounts that this
+  # landing zone does not create are not in that output and therefore not
+  # resolvable through an OU name.
   account_ids    = dependency.accounts.outputs.active_account_ids
   ou_name_to_id  = dependency.organization.outputs.ou_name_to_id
   account_ou_ids = dependency.accounts.outputs.active_account_ou_ids

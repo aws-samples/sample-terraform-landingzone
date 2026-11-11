@@ -5,6 +5,17 @@
 # The fallback reads the same document the loader injects
 # (tlz-quarantine-guardrails.json) so both paths carry one policy source.
 
+locals {
+  # Targets of the quarantine SCP: the listed OUs and accounts plus the
+  # quarantine OU, whose attachment exists before any account is created
+  # inside it. One list feeds the attachment, the SCP quota count
+  # (scp-quota.tf) and the target-resolution check (main.tf).
+  quarantine_scp_attachment_targets = distinct(concat(
+    var.quarantine_scp_targets,
+    var.quarantine_ou_name != "" ? [var.quarantine_ou_name] : [],
+  ))
+}
+
 resource "aws_organizations_policy" "quarantine" {
   count = var.enable_quarantine_scp ? 1 : 0
 
@@ -17,7 +28,7 @@ resource "aws_organizations_policy" "quarantine" {
 }
 
 resource "aws_organizations_policy_attachment" "quarantine" {
-  for_each = var.enable_quarantine_scp ? toset(var.quarantine_scp_targets) : toset([])
+  for_each = var.enable_quarantine_scp ? toset(local.quarantine_scp_attachment_targets) : toset([])
 
   policy_id = aws_organizations_policy.quarantine[0].id
   target_id = lookup(local.target_name_to_id, each.value, each.value)
@@ -38,10 +49,11 @@ resource "aws_organizations_policy_attachment" "quarantine" {
 # When both enable_quarantine_scp and enable_quarantine_auto_detach are true,
 # an EventBridge rule detects CodePipeline SUCCEEDED events of the pipelines
 # in var.quarantine_detach_pipeline_names and sends an SNS notification. The
-# release itself is manual: an operator detaches the quarantine SCP from the
-# accounts that run configured. No function detaches it, because a pipeline
-# event does not name the accounts a run configured, and detaching from every
-# target would release accounts that run never touched.
+# release itself is manual: an operator moves the accounts that run configured
+# out of the quarantine OU by setting quarantined = false on their entries and
+# applying the accounts unit. No function releases them, because a pipeline
+# event does not name the accounts a run configured, and releasing every
+# target would free accounts that run never touched.
 
 locals {
   enable_quarantine_auto_detach = var.enable_quarantine_scp && var.enable_quarantine_auto_detach
@@ -107,6 +119,6 @@ resource "aws_cloudwatch_event_target" "quarantine_detach" {
       pipeline = "$.detail.pipeline"
       state    = "$.detail.state"
     }
-    input_template = "\"TLZ Pipeline <pipeline> completed with state <state>. Please manually detach the Quarantine SCP from new accounts. Quarantine SCP ID: ${var.enable_quarantine_scp ? aws_organizations_policy.quarantine[0].id : "N/A"}\""
+    input_template = "\"TLZ Pipeline <pipeline> completed with state <state>. Move the configured accounts out of the quarantine OU: set quarantined = false on their entries in env/common.hcl and apply stacks/management/accounts. Quarantine SCP ID: ${var.enable_quarantine_scp ? aws_organizations_policy.quarantine[0].id : "N/A"}\""
   }
 }

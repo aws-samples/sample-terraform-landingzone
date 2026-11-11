@@ -2,9 +2,10 @@
 # AWS Config Recorder in Management Account
 # =============================================================================
 
-# Config Service-Linked-Role is managed automatically by AWS.
-# We do not create it ourselves — this avoids deletion issues.
-# If the role does not yet exist, the Config Recorder creates it automatically.
+# The recorder references the service-linked role AWSServiceRoleForConfig and
+# does not create it. The role must exist in the account before the first
+# apply; create it once with
+# `aws iam create-service-linked-role --aws-service-name config.<dns_suffix>`.
 
 # One recorder per account and region: AWS Config rejects a second
 # PutConfigurationRecorder with MaxNumberOfConfigurationRecordersExceeded.

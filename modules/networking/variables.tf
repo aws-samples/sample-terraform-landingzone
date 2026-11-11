@@ -129,6 +129,9 @@ variable "vpcs" {
       # zone (e.g. eu-central-1a) whose firewall endpoint the route uses;
       # target_type "tgw" requires transit_gateway.enabled.
       custom_routes = optional(list(object({
+        # Optional stable name: keys the route by name instead of its list
+        # position, so removing or reordering other routes leaves it alone.
+        name                         = optional(string, null)
         destination_cidr_block       = optional(string, null)
         destination_ipv6_cidr_block  = optional(string, null)
         destination_prefix_list_name = optional(string, null)
@@ -148,6 +151,7 @@ variable "vpcs" {
       gateway_type = string # "internet_gateway" or "virtual_private_gateway"
       tags         = optional(map(string), {})
       routes = optional(list(object({
+        name                         = optional(string, null) # stable key, as in custom_routes
         destination_cidr_block       = optional(string, null)
         destination_ipv6_cidr_block  = optional(string, null)
         destination_prefix_list_name = optional(string, null)
@@ -297,6 +301,9 @@ variable "vpcs" {
       description = optional(string, null) # null keeps the derived description
       tags        = optional(map(string), {})
       ingress = optional(list(object({
+        # Optional stable name: keys the rule by name instead of its list
+        # position, so removing or reordering other rules leaves it alone.
+        name             = optional(string, null)
         protocol         = optional(string, null)
         from_port        = optional(number, null)
         to_port          = optional(number, null)
@@ -318,6 +325,7 @@ variable "vpcs" {
         acknowledge_world_open_all_protocols = optional(bool, false)
       })), [])
       egress = optional(list(object({
+        name             = optional(string, null) # stable key, as on ingress
         protocol         = optional(string, null)
         from_port        = optional(number, null)
         to_port          = optional(number, null)
@@ -820,6 +828,26 @@ variable "vpcs" {
       ]
     ]))
     error_message = "Each tgw_attachment subnet_names entry must name a subnet of the same VPC."
+  }
+
+  # An optional rule or route name replaces the list index in the resource
+  # key. It starts with a letter, so it never equals an index, carries no dot
+  # (the key separator), and is unique within its list.
+  validation {
+    condition = alltrue(flatten([
+      for vpc in var.vpcs : [
+        for names in concat(
+          [for sg in vpc.security_groups : [for r in sg.ingress : r.name]],
+          [for sg in vpc.security_groups : [for r in sg.egress : r.name]],
+          [for s in vpc.subnets : [for r in s.custom_routes : r.name]],
+          [for g in vpc.gateway_route_tables : [for r in g.routes : r.name]],
+          ) : [
+          alltrue([for n in names : n == null || can(regex("^[A-Za-z][A-Za-z0-9_-]*$", n))]),
+          length(distinct(compact(names))) == length(compact(names)),
+        ]
+      ]
+    ]))
+    error_message = "Each security group rule name and route name (security_groups ingress/egress, subnets custom_routes, gateway_route_tables routes) must start with a letter, contain only letters, digits, hyphens and underscores, and be unique within its list."
   }
 
   # Endpoint options attach to a gateway endpoint by its service name; an
@@ -1920,6 +1948,18 @@ variable "transit_gateway" {
       ]
     ]))
     error_message = "Routes of target_type tgw require transit_gateway.enabled = true — the Transit Gateway they target is not created otherwise."
+  }
+
+  # Without subnet_names a VPC attachment takes the VPC's subnets whose name
+  # contains "tgw"; a VPC with neither would reach the provider with no subnet
+  # and fail there. Checked only while the Transit Gateway is on, because only
+  # then is the attachment created.
+  validation {
+    condition = !var.transit_gateway.enabled || alltrue([
+      for vpc in var.vpcs :
+      vpc.tgw_attachment == null || length(try(vpc.tgw_attachment.subnet_names, [])) > 0 || anytrue([for s in vpc.subnets : strcontains(s.name, "tgw")])
+    ])
+    error_message = "Each vpcs entry with a tgw_attachment needs at least one attachment subnet: list it in tgw_attachment.subnet_names, or give the VPC a subnet whose name contains \"tgw\" (one per Availability Zone the attachment should reach)."
   }
 
   validation {
@@ -3448,6 +3488,17 @@ variable "load_balancers" {
       contains(["internal", "internet-facing"], lb.scheme)
     ])
     error_message = "Each load_balancers scheme must be 'internal' or 'internet-facing'."
+  }
+
+  # An application load balancer created without a security group gets the
+  # VPC's default group, and this module removes every rule of that group
+  # (aws_default_security_group.vpc): the load balancer would pass no traffic.
+  validation {
+    condition = alltrue([
+      for lb in var.load_balancers :
+      lb.type != "application" || length(lb.security_groups) > 0
+    ])
+    error_message = "Each load_balancers entry of type 'application' must name at least one security group in security_groups. Without one AWS attaches the VPC's default security group, which this module strips of every rule, so the load balancer would pass no traffic."
   }
 
   # An internet-facing load balancer answers anyone on the internet the moment

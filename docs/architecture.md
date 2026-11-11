@@ -35,7 +35,7 @@ terraform-landing-zone/
 
 ## Dependency Graph
 
-![Module dependency graph: bootstrap, organization, control-tower, accounts, logging, config-recorder, security, security-config, config-rules, networking, iam, monitoring and customizations, in apply order](diagrams/img/module-dependencies.png)
+![Module dependency graph: bootstrap, organization, control-tower, accounts, logging, config-recorder, security, security-config, config-rules, networking, iam, monitoring and customizations; networking follows security and runs alongside config-rules](diagrams/img/module-dependencies.png)
 
 `iam` runs after `networking`: Managed Microsoft AD and the AD Connector are
 placed in a VPC, and the VPC and subnet identifiers are outputs of the
@@ -56,6 +56,7 @@ S3 Key = ${path_relative_to_include()}/terraform.tfstate
 stacks/management/organization/  → management/organization/terraform.tfstate
 stacks/audit/config-recorder/    → audit/config-recorder/terraform.tfstate
 stacks/workload-dev/config-recorder/ → workload-dev/config-recorder/terraform.tfstate
+stacks/workload-dev/networking/  → workload-dev/networking/terraform.tfstate
 ```
 
 An error in one module does not block others. Each module can be planned and applied independently.
@@ -189,7 +190,30 @@ creation.
 | Local/S3 | `"s3"` | `true` or `false` | `false` |
 | Pipeline | `"s3"` | `true` | `true` |
 
-Pipeline mode adds a Deployment Account with S3 state, IAM roles, and CI/CD infrastructure (CodePipeline, ECS, or external CI via OIDC).
+Pipeline mode adds a Deployment Account with S3 state, IAM roles, and CI/CD infrastructure (CodePipeline, ECS, or external CI via OIDC). With `enable_deployment_account = true` the state bucket, lock table and optional key live in the deployment account (`stacks/deployment/bootstrap` creates them; `stacks/management/bootstrap` is then never applied), and every unit's state backend assumes `account_access_role_name` there. The deployment account itself is a precondition like the management account: created before the mode is switched on, recorded as `deployment_account_id` in `env/accounts.hcl`, not an entry of `accounts`. The per-account units (`config-recorder-members`, `member-roles`, `ou-deployment/*`) therefore do not reach it; organization-level services (GuardDuty, Security Hub, the SCPs of its OU) do. The order of the first apply is in [Getting Started — Deployment account mode](getting-started.md#deployment-account-mode).
+
+### Credential chain
+
+Four identities carry every apply:
+
+| Identity | What it is | Account |
+|---|---|---|
+| **O** — the operator | The credential `aws_profile` names (the ambient chain when the key is empty) | management |
+| **R** — `TLZDeploymentRole` | The role the pipeline becomes; trusted by the deployment account's root only (`configurations/policies/deployment/role-trust-policy.json`), inline policy with `sts:AssumeRole` on `*` | management |
+| **A** — the access role | `account_access_role_name`, the AWS-created role of every member account, trusted by the management account | deployment (and every member account) |
+| **P** — the pipeline's runtime role | `TLZCodeBuildServiceRole`, `TLZECSTaskRole` or `TLZExternalCIRole` | deployment |
+
+The pipeline becomes a management-account principal **before Terragrunt starts**: its build writes a profile of the configured `aws_profile` name into the container, and that profile assumes R with P's own credentials (`modules/pipeline`, [Credentials of the pipeline](../modules/pipeline/README.md#credentials-of-the-pipeline)). From then on it walks exactly the operator's path, so `stacks/root.hcl` has no pipeline branch and no deployment-role branch — `stacks/management/deployment-role`, the unit that creates R, runs as O or R like every other management-account unit.
+
+| Caller | Unit | Provider | State backend |
+|---|---|---|---|
+| operator | management-account unit (`deployment-role` included) | O | O → A |
+| operator | member-account unit (`cross_account.hcl`) | O → member access role | O → A |
+| operator | `deployment/bootstrap` | O → A | local |
+| operator | `deployment/pipeline` | O → A | O → A |
+| pipeline | any unit | as above, with P → R in place of O | R → A |
+
+Every hop is admitted today: A and the member access roles trust the management account, R's inline policy grants `sts:AssumeRole`, and R's trust stays the deployment account's root. A session assumed from another role is capped at one hour by AWS; the SDK renews it, and no duration is set anywhere. With the mode off nothing of this applies: provider and backend are O, as in the first row without the hop.
 
 ## Design Decisions
 

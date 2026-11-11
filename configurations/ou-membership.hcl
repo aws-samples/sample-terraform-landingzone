@@ -23,6 +23,11 @@
 #   effective = distinct( union(OU members incl. nested OUs, accounts) )
 #               minus excluded_accounts
 #
+# An account declared in an OU marked `ignore = true` (or below one) is
+# suspended and joins no OU membership; `suspended_account_names` lists these
+# accounts for the per-account units (stacks/*/*/cross_account.hcl), which
+# resolve no account id for them.
+#
 # Error handling (no silent fallbacks): an entry naming an OU that the
 # configured tree does not contain aborts the run with a message that names
 # the unknown OU and the entry. The same applies to an account declaration
@@ -67,9 +72,14 @@ locals {
   # ---------------------------------------------------------------------------
   # Account -> OU (declarations) and name -> ID (recorded IDs)
   # ---------------------------------------------------------------------------
+  # The same two rules as the accounts module: a path such as "Workloads/Dev"
+  # names its last segment, and an entry placed by organizational_unit_id
+  # alone has no OU name and joins a membership only through an explicit
+  # `accounts` entry of ou_deployments.
   account_ou = {
     for account in local.common.locals.accounts :
-    account.name => account.organizational_unit_name
+    account.name => element(split("/", account.organizational_unit_name), length(split("/", account.organizational_unit_name)) - 1)
+    if try(account.organizational_unit_name, null) != null
   }
 
   # An account declaration naming an OU outside the configured tree would
@@ -82,12 +92,37 @@ locals {
     "ERROR: accounts declare organizational_unit_name values missing from organizational_units: ${join(", ", local._unknown_account_ous)}"
   )
 
+  # ---------------------------------------------------------------------------
+  # Ignored OUs (ignore = true) and the accounts declared there
+  # ---------------------------------------------------------------------------
+  # The flag covers the OU and every OU below it — the closure the organization
+  # module reports as ignored_ou_ids. An account declared in one of them is
+  # suspended: still declared and created, but no deployment target. It joins
+  # no membership below, and the per-account units (stacks/*/*/cross_account.hcl)
+  # resolve no account id for it, so their exclude blocks take them out. An
+  # entry placed by organizational_unit_id alone has no OU name here and is
+  # matched by the accounts module only.
+  ou_ignored = {
+    for ou in local.common.locals.organizational_units : ou.name => try(ou.ignore, false)
+  }
+
+  ignored_ou_names = sort([
+    for name, chain in local.ou_chain : name
+    if length([for link in chain : link if lookup(local.ou_ignored, link, false)]) > 0
+  ])
+
+  suspended_account_names = sort([
+    for name, ou in local.account_ou : name
+    if contains(local.ignored_ou_names, ou)
+  ])
+
   # Name-keyed account IDs. Only env/accounts.hcl:workload_accounts carries
   # names; entries with an empty ID are not created yet and stay outside the
-  # membership until their ID is recorded (generate-time boundary).
+  # membership until their ID is recorded (generate-time boundary). Suspended
+  # accounts stay outside with or without an ID.
   account_ids = {
     for name, id in local.accounts.locals.workload_accounts : name => id
-    if id != ""
+    if id != "" && !contains(local.suspended_account_names, name)
   }
 
   # ---------------------------------------------------------------------------

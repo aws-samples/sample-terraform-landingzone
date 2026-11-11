@@ -70,12 +70,12 @@ variable "cur_config" {
 }
 
 variable "s3_bucket_name" {
-  description = "Name of the S3 bucket for CUR report storage (injected via Terragrunt dependency from the logging stack). Used as fallback when enable_dedicated_bucket is false."
+  description = "Name of the S3 bucket for CUR report storage when enable_dedicated_bucket is false. May be empty when enable_dedicated_bucket is true: the report then goes to the dedicated bucket and this name is not read."
   type        = string
 
   validation {
-    condition     = length(var.s3_bucket_name) > 0
-    error_message = "s3_bucket_name must be non-empty — an S3 bucket is required for CUR report storage."
+    condition     = var.enable_dedicated_bucket || length(var.s3_bucket_name) > 0
+    error_message = "s3_bucket_name must be non-empty unless enable_dedicated_bucket is true — without the dedicated bucket the report needs an existing S3 bucket."
   }
 }
 

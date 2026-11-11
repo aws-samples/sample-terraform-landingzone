@@ -110,4 +110,16 @@ locals {
     ][0]
     if length([for s in vpc.subnets : s if s.type == "public" && s.nat_gateway]) > 0
   }
+
+  # NAT gateway each private subnet routes through: the first public NAT
+  # gateway (in list order) in the subnet's own zone, Availability Zone or
+  # Local Zone, else the VPC's first one. A VPC with one NAT gateway routes
+  # every private subnet to it, as before.
+  private_subnet_nat_gw = {
+    for key, s in local.private_subnets : key => try([
+      for n in local.vpc_map[s.vpc_name].subnets : "${s.vpc_name}.${n.name}"
+      if n.type == "public" && n.nat_gateway && coalesce(n.local_zone, n.availability_zone) == coalesce(s.local_zone, s.availability_zone)
+    ][0], local.nat_gw_per_vpc[s.vpc_name])
+    if contains(keys(local.nat_gw_per_vpc), s.vpc_name)
+  }
 }

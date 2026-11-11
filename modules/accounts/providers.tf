@@ -11,12 +11,15 @@
 # calling module and leaves the module unvalidatable on its own.
 #
 # When var.enable_deployment_account is false the assume_role block is omitted:
-# the alias then resolves to the ambient credentials and stays unused, because
-# aws_ssm_parameter.account_id_deployment has an empty for_each in that case.
+# the alias then resolves to var.aws_profile (or the default credential chain)
+# and stays unused, because aws_ssm_parameter.account_id_deployment has an
+# empty for_each in that case. Terraform still configures the alias in every
+# plan, so it needs the same profile as the default provider.
 
 provider "aws" {
-  alias  = "deployment_account"
-  region = var.region != "" ? var.region : null
+  alias   = "deployment_account"
+  region  = var.region != "" ? var.region : null
+  profile = var.aws_profile != "" ? var.aws_profile : null
 
   dynamic "assume_role" {
     for_each = var.enable_deployment_account && var.deployment_account_id != "" ? [1] : []

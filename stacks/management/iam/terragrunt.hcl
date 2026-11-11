@@ -80,12 +80,9 @@ inputs = {
   # AWS Managed Microsoft AD and AD Connector.
   #
   # vpc_ids and subnet_ids come from the networking stack — modules/networking is
-  # the only place the identifiers exist. An ordering edge config-rules -> iam
-  # would close a cycle (networking -> config-rules -> iam -> networking), which
-  # terragrunt answers by dropping units from the run queue. config-rules
-  # therefore does not depend on iam (the reasons are written down in
-  # stacks/management/config-rules/terragrunt.hcl), and iam runs after
-  # networking.
+  # the only place the identifiers exist. config-rules does not depend on iam
+  # (the reasons are written down in stacks/management/config-rules/terragrunt.hcl),
+  # and iam runs after networking.
   managed_active_directories = local.compliance.locals.managed_active_directories
   vpc_ids                    = dependency.networking.outputs.vpc_ids
   subnet_ids                 = dependency.networking.outputs.subnet_ids
@@ -99,7 +96,7 @@ inputs = {
   # the account named by secret_config.account.
   ou_name_to_id = dependency.organization.outputs.ou_name_to_id
 
-  # The active pendant — warm accounts are no deployment targets.
+  # The active pendant — warm and suspended accounts are no deployment targets.
   account_ou_ids              = dependency.accounts.outputs.active_account_ou_ids
   mad_secret_access_role_name = try(local.common.locals.account_access_role_name, "AWSControlTowerExecution")
 

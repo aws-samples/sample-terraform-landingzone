@@ -12,7 +12,12 @@
 
 locals {
   # --- Global Configuration ---
-  region      = "eu-central-1"
+  region = "eu-central-1"
+  # Profile of the management-account credential every unit runs with; empty
+  # means the ambient credential chain. The pipeline writes a profile of this
+  # same name into its build container before Terragrunt starts (it assumes
+  # TLZDeploymentRole with the container's own role), so any non-empty name
+  # works there; a laptop keeps its own ~/.aws/config entry of that name.
   aws_profile = "your-aws-profile"
 
   # Partition — derived from the region prefix, one source instead of two
@@ -95,7 +100,7 @@ locals {
   # cutoff keeps working — only set this to true there.
   enable_cloudtrail_lake          = false # Enable CloudTrail Lake event data store for SQL querying (closed to new customers since 2026-05-31)
   enable_vpc_flow_logs_bucket     = false # Enable dedicated S3 bucket for VPC flow logs
-  enable_account_move_automation  = false # Enable EventBridge + Lambda automation to move accounts between OUs (created in us-east-1)
+  enable_account_move_automation  = false # Log Organizations CreateAccount and MoveAccount events with a Lambda function; moves no account (created in us-east-1)
   account_move_log_retention_days = 90    # CloudWatch log retention for the account move Lambda
   enable_control_tower_enrollment = false # Enable check block guidance for CT account enrollment
 
@@ -170,7 +175,13 @@ locals {
     { name = "Security", parent_name = "__root__" },
     { name = "Infrastructure", parent_name = "__root__" },
     { name = "Workloads", parent_name = "__root__" },
+    # ignore = true: accounts declared in this OU (or below it) are no
+    # deployment targets — created and kept, but no stack configures them and
+    # no unit assumes a role in them. The deny-all suspended-guardrails policy
+    # below is attached to the OU as to any other. See docs/operations.md,
+    # "Suspending an Account".
     { name = "Suspended", parent_name = "__root__", ignore = true },
+    { name = "Quarantine", parent_name = "__root__" },
     { name = "Sandbox", parent_name = "Workloads" },
     { name = "Dev", parent_name = "Workloads" },
     { name = "Test", parent_name = "Workloads" },
@@ -182,7 +193,7 @@ locals {
       name        = "vpc-block-public-access"
       description = "VPC Block Public Access declarative policy — prevents public access to VPCs."
       content     = "__LOADER_INJECT__"
-      targets     = ["Security", "Dev", "Test", "Prod", "Network", "SharedServices"]
+      targets     = ["Security", "Infrastructure", "Workloads"]
       type        = "DECLARATIVE_POLICY_EC2"
     },
   ]
@@ -261,25 +272,27 @@ locals {
       targets     = ["Infrastructure", "Workloads"]
     },
   ]
-  # Delegated Admin — requires account IDs, configure after account creation
+  # Delegated Admin — requires account IDs, configure after account creation:
+  # replace each placeholder with the 12-digit ID of that account. Every
+  # service_principal named here must also have trusted access, from a toggle
+  # (config by enable_logging) or from additional_aws_service_access_principals
+  # below; otherwise the organization plan is refused.
+  # GuardDuty, Security Hub, Macie and Access Analyzer are registered by
+  # stacks/management/security; do not list them here.
   # Example:
   # service_access_principals = [
-  #   { service_principal = "guardduty.${local.dns_suffix}",       account_id = "222222222222" },
-  #   { service_principal = "securityhub.${local.dns_suffix}",     account_id = "222222222222" },
-  #   { service_principal = "access-analyzer.${local.dns_suffix}", account_id = "222222222222" },
+  #   { service_principal = "fms.${local.dns_suffix}", account_id = "__AUDIT_ACCOUNT_ID__" },
+  #   { service_principal = "ec2.${local.dns_suffix}", account_id = "__NETWORK_ACCOUNT_ID__" },
+  #   { service_principal = "config.${local.dns_suffix}", account_id = "__AUDIT_ACCOUNT_ID__" },
+  #   { service_principal = "malware-protection.guardduty.${local.dns_suffix}", account_id = "__AUDIT_ACCOUNT_ID__" },
+  #   { service_principal = "sso.${local.dns_suffix}", account_id = "__SHARED_SERVICES_ACCOUNT_ID__" },
+  #   # Optional: when IPAM is configured
+  #   { service_principal = "ipam.${local.dns_suffix}", account_id = "__NETWORK_ACCOUNT_ID__" },
   # ]
   # Service principals build their DNS suffix from local.dns_suffix, so the
   # list stays partition-neutral. The loader drops the sso entry
   # in aws-eusc (Identity Center is not available there).
-  service_access_principals = [
-    { service_principal = "fms.${local.dns_suffix}", account_id = "__AUDIT_ACCOUNT_ID__" },
-    { service_principal = "ec2.${local.dns_suffix}", account_id = "__NETWORK_ACCOUNT_ID__" },
-    { service_principal = "config.${local.dns_suffix}", account_id = "__AUDIT_ACCOUNT_ID__" },
-    { service_principal = "malware-protection.guardduty.${local.dns_suffix}", account_id = "__AUDIT_ACCOUNT_ID__" },
-    { service_principal = "sso.${local.dns_suffix}", account_id = "__SHARED_SERVICES_ACCOUNT_ID__" },
-    # Optional: uncomment when IPAM is configured
-    # { service_principal = "ipam.${local.dns_suffix}", account_id = "__NETWORK_ACCOUNT_ID__" },
-  ]
+  service_access_principals = []
   # Trusted access beyond the module toggles. stacks/management/organization
   # derives aws_service_access_principals from enable_logging, enable_security
   # (with enable_detective / enable_audit_manager), enable_macie and
@@ -304,6 +317,10 @@ locals {
   additional_enabled_policy_types = []
 
   # --- Accounts ---
+  # A NEW account is declared with its final organizational_unit_name and
+  # quarantined = true: it is created inside the quarantine OU (see
+  # quarantine_ou_name below), configured there, and released by setting
+  # quarantined = false and applying stacks/management/accounts.
   accounts = [
     {
       name                     = "Audit"
@@ -340,6 +357,7 @@ locals {
       email                    = "org+perimeter@example.com"
       organizational_unit_name = "Infrastructure"
       tags                     = { AccountType = "Perimeter" }
+      # quarantined              = true
     },
   ]
 
@@ -452,6 +470,17 @@ locals {
   guardduty_s3_malware_configs           = []
   guardduty_eks_manage_agent             = false
 
+  # Where the finding consumers run — the GuardDuty findings export, the Macie
+  # classification export, the Security Hub finding aggregator and the
+  # automation rules. In the Audit account (the delegated administrator) they
+  # reach every member account's findings; in the management account only its
+  # own. true (the default when the key is absent): stacks/audit/security-org-config
+  # creates them once the Audit account resolves, and stacks/audit/monitoring
+  # alerts on them; stacks/management/security creates none. false keeps
+  # today's layout in the management account. A deployment without an Audit
+  # account keeps the consumers in the management account either way.
+  security_finding_consumers_in_audit = true
+
   security_hub_standards = [
     "aws-foundational-security-best-practices/v/1.0.0",
     "cis-aws-foundations-benchmark/v/3.0.0",
@@ -478,6 +507,11 @@ locals {
   enable_scp_revert_detection    = true
   enable_scp_auto_revert         = false
   scp_revert_notification_emails = ["security-notifications@example.com"]
+  # With enable_scp_auto_revert = true, the function re-attaches what an apply
+  # running as your own principal detaches, unless that principal is listed
+  # here (exact role ARN, path included). Example for an IAM Identity Center
+  # permission set:
+  # scp_revert_exempt_principal_arns = ["arn:aws:iam::111111111111:role/aws-reserved/sso.amazonaws.com/eu-central-1/AWSReservedSSO_AdministratorAccess_0123456789abcdef"]
 
   # --- Central Root Management ---
   enable_central_root_management = true
@@ -603,6 +637,13 @@ locals {
   sns_lambda_targets = []
   alert_on_severity  = "HIGH"
   sns_kms_encryption = true
+  # Alerting in the Audit account (stacks/audit/monitoring, with
+  # security_finding_consumers_in_audit): the GuardDuty and Security Hub rules
+  # there publish to their own topics. Absent, both lists fall back to
+  # sns_email_targets and sns_topics — every address then confirms two
+  # subscriptions, one per account.
+  # audit_sns_email_targets = ["security-team@example.com"]
+  # audit_sns_topics        = []
   # SecurityHub → CloudWatch Forwarding
   enable_securityhub_cloudwatch_forwarding = false
   securityhub_severity_filter              = []
@@ -669,18 +710,26 @@ locals {
 
   # --- Quarantine SCP ---
   # When enable_quarantine_scp is true, the organization stack creates the
-  # SCP TLZQuarantinePolicy and attaches it to the OUs and accounts listed in
-  # targets, and nowhere else. It denies all actions except for TLZ
-  # provisioning roles (tlz-*, AWSControlTowerExecution) so the provisioning
-  # pipeline can still configure the account. List the new accounts in
-  # targets while they are provisioned. name only selects the document the
-  # loader injects for content = "__LOADER_INJECT__"; the SCP's name is
-  # always TLZQuarantinePolicy, and description is not read. Release is
-  # manual: enable_quarantine_auto_detach only sends a notification when the
-  # pipeline succeeds; then detach the SCP from the accounts that run
-  # configured.
+  # SCP TLZQuarantinePolicy and attaches it to the OU named in
+  # quarantine_ou_name and to the OUs and accounts listed in targets, and
+  # nowhere else. It denies all actions except for the provisioning roles
+  # (tlz-*, AWSControlTowerExecution, TLZDeploymentRole,
+  # OrganizationAccountAccessRole), so the landing zone can still configure
+  # the account. New account: declare it in accounts with its final
+  # organizational_unit_name and quarantined = true; the accounts stack creates
+  # it inside the quarantine OU, where the SCP already applies, and the
+  # fan-out configures it through the exempt access role. Release: set
+  # quarantined = false and apply stacks/management/accounts, which moves the
+  # account to its declared OU. quarantine_ou_name must be a declared
+  # organizational_units entry; the SCP takes one of the five SCP slots of
+  # that OU. name only selects the document the loader injects for
+  # content = "__LOADER_INJECT__"; the SCP's name is always
+  # TLZQuarantinePolicy, and description is not read. Release is manual:
+  # enable_quarantine_auto_detach only sends a notification when the
+  # pipeline succeeds.
   enable_quarantine_scp         = true
   enable_quarantine_auto_detach = false
+  quarantine_ou_name            = "Quarantine"
   quarantine_scp = {
     name        = "quarantine-guardrails"
     description = "Quarantine SCP for new accounts — denies all actions except TLZ provisioning roles until the provisioning pipeline completes."
@@ -795,13 +844,45 @@ locals {
   # firewall_instances = {
   #   manager = { launch_template = "appliance" }
   # }
-  # --- Workload Compute (stacks/workload-dev/workload-compute) ---
+  # --- Workload Compute (stacks/workload-dev/networking + workload-compute) ---
   # Launch templates and auto-scaling groups for workloads, same entry forms
-  # as the firewall collections; target_groups reference the target group
-  # names of the networking stack (application and network load balancers).
+  # as the firewall collections. The fleet runs in the workload account, so
+  # its security groups, target groups and the internal load balancer in front
+  # of it are owned there too (workload_security_groups, workload_target_groups,
+  # workload_load_balancers; entry schemas of the networking collections, see
+  # modules/workload-networking/README.md): an auto-scaling group attaches only
+  # to a target group of its own account, and a participant of a shared VPC
+  # launches instances only with groups it owns. security_group_names name
+  # vpc_name.sg_name keys of workload_security_groups, target_groups name
+  # workload_target_groups entries, subnet_names keep naming the management
+  # vpc_name.subnet_name keys. One toggle gates both units.
+  # Prerequisites: enable_ram_sharing = true, ram.<dns suffix> among the
+  # additional_aws_service_access_principals, share_targets = ["Workload-Dev"]
+  # on every subnet the workload uses (vpcs[].subnets[]), and for HTTPS/TLS
+  # listeners an ACM certificate of the workload account.
   enable_workload_compute     = false
   workload_launch_templates   = {}
   workload_autoscaling_groups = {}
+  workload_security_groups    = []
+  workload_target_groups      = []
+  workload_load_balancers     = []
+  # Example (shared VPC "workload" with subnets private-a/private-b):
+  # workload_security_groups = [
+  #   { vpc_name = "workload", name = "alb", ingress = [{ types = ["HTTPS"], cidr_blocks = ["10.0.0.0/8"] }] },
+  #   { vpc_name = "workload", name = "web", ingress = [{ types = ["HTTP"], source_security_group = "alb" }] },
+  # ]
+  # workload_target_groups = [{ name = "web-tg", port = 80, protocol = "HTTP", vpc_name = "workload" }]
+  # workload_load_balancers = [{
+  #   name = "web-alb", type = "application", vpc_name = "workload", subnet_names = ["private-a", "private-b"]
+  #   security_groups = ["alb"]
+  #   listeners       = [{ port = 443, protocol = "HTTPS", target_group = "web-tg", certificate_arn = "arn:aws:acm:eu-central-1:<workload account>:certificate/<id>" }]
+  # }]
+  # workload_launch_templates = {
+  #   web = { ami_id = "ami-0123456789abcdef0", instance_type = "m5.large", security_group_names = ["workload.web"] }
+  # }
+  # workload_autoscaling_groups = {
+  #   web-fleet = { launch_template = "web", min_size = 2, max_size = 6, subnet_names = ["workload.private-a", "workload.private-b"], target_groups = ["web-tg"] }
+  # }
   # Acknowledged IMDSv1 launch templates, same meaning and same cost as the
   # firewall list above.
   workload_imdsv1_acknowledged_launch_templates = []
@@ -852,6 +933,20 @@ locals {
   enable_account_warming = false
 
   # --- Deployment Account ---
+  # enable_deployment_account = true moves the state bucket, the lock table and
+  # the key into the deployment account (stacks/deployment/bootstrap creates
+  # them; stacks/management/bootstrap is then never applied) and makes every
+  # unit's state backend assume account_access_role_name there, while the
+  # provider stays aws_profile. The deployment account is a precondition like
+  # the management account: create it first, record it as deployment_account_id
+  # in env/accounts.hcl, keep it out of `accounts`. Needs state_backend = "s3"
+  # with real bucket and table names (a NEW bucket name if a management bucket
+  # exists). Order of the first apply: docs/getting-started.md, "Deployment
+  # account mode". For a pipeline deployment, env/common.hcl and
+  # env/accounts.hcl are committed in the repository the pipeline builds
+  # (`git add -f` once; this repository's .gitignore keeps them out here) and
+  # env/accounts.hcl carries every account id, so no lookup runs in the
+  # container.
   enable_deployment_account   = false
   enable_pipeline             = false
   pipeline_type               = "codepipeline" # "codepipeline" | "ecs" | "external"

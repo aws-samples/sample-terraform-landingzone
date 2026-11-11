@@ -79,6 +79,9 @@ mock_provider "time" {}
 variables {
   repository_name       = "my-org/landing-zone"
   source_connection_arn = "arn:aws:codeconnections:eu-central-1:123456789012:connection/11111111-2222-3333-4444-555555555555"
+  # The profile the build writes and Terragrunt's provider.tf and backend.tf
+  # name; the management entry is the role that profile assumes.
+  aws_profile = "tlz-pipeline"
   deployment_role_arns = {
     management = "arn:aws:iam::111111111111:role/TLZDeploymentRole"
     audit      = "arn:aws:iam::222222222222:role/TLZDeploymentRole"
@@ -2218,4 +2221,90 @@ run "codebuild_encryption_kms_named_reaches_both_projects_and_grants_six_actions
     condition     = length(jsondecode(aws_iam_role_policy.codebuild_encryption_kms[0].policy).Statement) == 1
     error_message = "The grant must carry exactly one statement."
   }
+}
+
+# -----------------------------------------------------------------------------
+# The pipeline's credential: a profile that assumes the management deployment
+# role before Terragrunt starts
+# -----------------------------------------------------------------------------
+# Terragrunt renders provider.tf and backend.tf with `profile = "<aws_profile>"`
+# for the operator and the pipeline alike, and a build container has no such
+# profile. The build therefore writes one of that name into ~/.aws/config
+# before the first terragrunt command: it assumes
+# deployment_role_arns["management"] with the container's own credentials
+# (credential_source = EcsContainer, the role CodeBuild or ECS attached to the
+# container). From there the pipeline walks exactly the operator's path. Both
+# buildspecs and the ECS command carry the same lines; the profile is written
+# BEFORE terragrunt runs.
+run "pipeline_profile_assumes_the_management_deployment_role" {
+  command = plan
+
+  variables {
+    aws_profile = "tlz-pipeline-profile"
+  }
+
+  assert {
+    condition = alltrue([
+      for text in [
+        aws_codebuild_project.plan[0].source[0].buildspec,
+        aws_codebuild_project.apply[0].source[0].buildspec,
+        ] : alltrue([
+          strcontains(text, "[profile tlz-pipeline-profile]"),
+          strcontains(text, "role_arn = ${var.deployment_role_arns["management"]}"),
+          strcontains(text, "credential_source = EcsContainer"),
+          strcontains(text, "region = eu-central-1"),
+          length(regexall("(?s)> ~/.aws/config.*terragrunt run --all -- ", text)) == 1,
+      ])
+    ])
+    error_message = "Both buildspecs must write ~/.aws/config with [profile <aws_profile>], role_arn = deployment_role_arns[\"management\"], credential_source = EcsContainer and the region, before the terragrunt command."
+  }
+}
+
+run "ecs_command_assumes_the_management_deployment_role" {
+  command = plan
+
+  variables {
+    pipeline_type          = "ecs"
+    repository_name        = "landing-zone"
+    source_connection_arn  = ""
+    ecs_security_group_ids = ["sg-0123456789abcdef0"]
+    aws_profile            = "tlz-pipeline-profile"
+  }
+
+  assert {
+    condition = alltrue([
+      for container in jsondecode(aws_ecs_task_definition.pipeline[0].container_definitions) : alltrue([
+        strcontains(join(" ", container.command), "[profile tlz-pipeline-profile]"),
+        strcontains(join(" ", container.command), "role_arn = ${var.deployment_role_arns["management"]}"),
+        strcontains(join(" ", container.command), "credential_source = EcsContainer"),
+        length(regexall("> ~/.aws/config && terragrunt run --all -- ", join(" ", container.command))) == 1,
+      ])
+    ])
+    error_message = "The ECS task command must write ~/.aws/config with [profile <aws_profile>], role_arn = deployment_role_arns[\"management\"] and credential_source = EcsContainer before the terragrunt command."
+  }
+}
+
+# Rejection: without a profile name the build writes no profile and Terragrunt's
+# own files name one that does not exist; without the management entry there is
+# no role for the profile to assume.
+run "empty_aws_profile_rejected" {
+  command = plan
+
+  variables {
+    aws_profile = ""
+  }
+
+  expect_failures = [var.aws_profile]
+}
+
+run "deployment_role_arns_without_management_rejected" {
+  command = plan
+
+  variables {
+    deployment_role_arns = {
+      audit = "arn:aws:iam::222222222222:role/TLZDeploymentRole"
+    }
+  }
+
+  expect_failures = [var.deployment_role_arns]
 }

@@ -1234,6 +1234,75 @@ run "warm_account_missing_from_active_outputs" {
 }
 
 # -----------------------------------------------------------------------------
+# Suspended-account exclusion: an account declared in an OU the organization
+# module reports in ignored_ou_ids (ignore = true, or below such an OU) is no
+# deployment target — missing from the active pendants, still created and
+# still listed by the raw outputs.
+# -----------------------------------------------------------------------------
+run "suspended_account_missing_from_active_outputs" {
+  command = plan
+
+  variables {
+    ou_name_to_id = {
+      Workloads = "ou-abc1-11111111"
+      Suspended = "ou-abc1-55555555"
+    }
+    ignored_ou_ids = ["ou-abc1-55555555"]
+    accounts = [
+      {
+        name                     = "Workload-D"
+        email                    = "workload-d@example.com"
+        organizational_unit_name = "Workloads"
+      },
+      {
+        name                     = "Retired-1"
+        email                    = "retired-1@example.com"
+        organizational_unit_name = "Suspended"
+      },
+    ]
+  }
+
+  # Naming the suspended accounts on every plan is the DESIGNED behaviour.
+  expect_failures = [check.suspended_accounts_named]
+
+  assert {
+    condition     = output.suspended_account_names == ["Retired-1"]
+    error_message = "suspended_account_names must list exactly the account declared in the ignored OU."
+  }
+
+  assert {
+    condition     = !contains(keys(output.active_account_ids), "Retired-1")
+    error_message = "A suspended account must be excluded from active_account_ids."
+  }
+
+  assert {
+    condition     = contains(keys(output.active_account_ids), "Workload-D")
+    error_message = "An account in a working OU must stay in active_account_ids."
+  }
+
+  assert {
+    condition     = !contains(keys(output.active_account_ou_ids), "Retired-1")
+    error_message = "A suspended account must be excluded from active_account_ou_ids."
+  }
+
+  assert {
+    condition     = contains(keys(output.active_account_ou_ids), "Workload-D")
+    error_message = "An account in a working OU must stay in active_account_ou_ids."
+  }
+
+  # The raw outputs stay complete — the declaration still manages the account.
+  assert {
+    condition     = contains(keys(output.account_ids), "Retired-1")
+    error_message = "The raw account_ids output must keep listing suspended accounts."
+  }
+
+  assert {
+    condition     = length(aws_organizations_account.this) == 2
+    error_message = "Both accounts must be created — a suspended account is excluded from configuration, not from the declaration."
+  }
+}
+
+# -----------------------------------------------------------------------------
 # Ineffective warm flags: warm = true with enable_account_warming =
 # false is named by its own check — and the active pendants stay identical to
 # the raw outputs (zero-diff).
@@ -1543,4 +1612,193 @@ run "regression_empty_principal_name_skips_account" {
     condition     = length(output.sso_assignments) == 0
     error_message = "No assignment may be reported for the skipped account."
   }
+}
+
+# -----------------------------------------------------------------------------
+# With ou_name_to_id supplied, neither organization data source is read: the
+# map decides every OU, so the reads only cost API calls, and on a management
+# account without an organization they fail the plan.
+# -----------------------------------------------------------------------------
+run "regression_supplied_ou_map_reads_no_organization" {
+  command = plan
+
+  variables {
+    organization_root_id = ""
+    accounts = [
+      {
+        name                     = "Workload-A"
+        email                    = "workload-a@example.com"
+        organizational_unit_name = "Workloads"
+      },
+    ]
+  }
+
+  override_data {
+    target = data.aws_organizations_organization.current
+    values = {
+      roots = [{ id = "r-abc1" }]
+    }
+  }
+
+  assert {
+    condition     = length(data.aws_organizations_organization.current) == 0 && length(data.aws_organizations_organizational_units.root) == 0
+    error_message = "With ou_name_to_id supplied the module must not read the organization or its root OUs."
+  }
+
+  assert {
+    condition     = aws_organizations_account.this["workload-a@example.com"].parent_id == "ou-abc1-11111111"
+    error_message = "The OU name must resolve through ou_name_to_id."
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Quarantine OU: an account declared with quarantined = true is created inside
+# the quarantine OU (var.quarantine_ou_id, the organization module's output),
+# where the quarantine SCP already applies, while its declared OU stays its
+# deployment scope. Release: quarantined = false moves it to the declared OU.
+# -----------------------------------------------------------------------------
+
+run "quarantined_account_lands_in_quarantine_ou" {
+  command = plan
+
+  variables {
+    quarantine_ou_id = "ou-abc1-99999999"
+    accounts = [
+      {
+        name                     = "Workload-Q"
+        email                    = "workload-q@example.com"
+        organizational_unit_name = "Workloads"
+        quarantined              = true
+      },
+      {
+        name                     = "Workload-C"
+        email                    = "workload-c@example.com"
+        organizational_unit_name = "Workloads"
+      },
+    ]
+  }
+
+  # Naming the quarantined accounts on every plan is the designed behaviour.
+  expect_failures = [check.quarantined_accounts_named]
+
+  assert {
+    condition     = aws_organizations_account.this["workload-q@example.com"].parent_id == "ou-abc1-99999999"
+    error_message = "A quarantined account must be created inside the quarantine OU."
+  }
+
+  assert {
+    condition     = aws_organizations_account.this["workload-c@example.com"].parent_id == "ou-abc1-11111111"
+    error_message = "An account without the flag must keep its declared OU as parent."
+  }
+
+  assert {
+    condition     = output.active_account_ou_ids["Workload-Q"] == "ou-abc1-11111111"
+    error_message = "active_account_ou_ids must publish the declared OU of a quarantined account, not the quarantine OU."
+  }
+
+  assert {
+    condition     = output.active_account_ou_ids["Workload-C"] == aws_organizations_account.this["workload-c@example.com"].parent_id
+    error_message = "For an account without the flag the declared OU and the parent are the same value."
+  }
+
+  assert {
+    condition     = contains(keys(output.active_account_ids), "Workload-Q")
+    error_message = "A quarantined account stays a deployment target: the fan-out configures it through the exempt access role."
+  }
+
+  assert {
+    condition     = tolist(output.quarantined_account_names) == tolist(["Workload-Q"])
+    error_message = "quarantined_account_names must list the quarantined accounts."
+  }
+}
+
+# Without the flag nothing changes: no quarantined names, parents as declared.
+run "quarantine_flag_absent_changes_nothing" {
+  command = plan
+
+  variables {
+    accounts = [
+      {
+        name                     = "Workload-C"
+        email                    = "workload-c@example.com"
+        organizational_unit_name = "Workloads"
+      },
+    ]
+  }
+
+  assert {
+    condition     = length(output.quarantined_account_names) == 0 && aws_organizations_account.this["workload-c@example.com"].parent_id == "ou-abc1-11111111"
+    error_message = "Without quarantined = true the module must plan as before."
+  }
+}
+
+run "quarantined_without_ou_rejected" {
+  command = plan
+
+  variables {
+    accounts = [
+      {
+        name                     = "Workload-Q"
+        email                    = "workload-q@example.com"
+        organizational_unit_name = "Workloads"
+        quarantined              = true
+      },
+    ]
+  }
+
+  # The precondition refuses the account; the naming check fires as well.
+  expect_failures = [aws_organizations_account.this, check.quarantined_accounts_named]
+}
+
+run "invalid_quarantine_ou_id_rejected" {
+  command = plan
+
+  variables {
+    accounts         = []
+    quarantine_ou_id = "Quarantine"
+  }
+
+  expect_failures = [var.quarantine_ou_id]
+}
+
+# The built-in quarantine SCP exempts four role patterns; an access role
+# outside them is denied every action in the quarantined account.
+run "quarantine_check_names_accounts_and_roles" {
+  command = plan
+
+  variables {
+    quarantine_ou_id         = "ou-abc1-99999999"
+    account_access_role_name = "CustomAccessRole"
+    accounts = [
+      {
+        name                     = "Workload-Q"
+        email                    = "workload-q@example.com"
+        organizational_unit_name = "Workloads"
+        quarantined              = true
+      },
+    ]
+  }
+
+  expect_failures = [check.quarantined_accounts_named, check.quarantine_exempts_access_roles]
+}
+
+run "quarantine_check_accepts_exempt_roles" {
+  command = plan
+
+  variables {
+    quarantine_ou_id          = "ou-abc1-99999999"
+    account_access_role_name  = "tlz-deploy"
+    created_account_role_name = "OrganizationAccountAccessRole"
+    accounts = [
+      {
+        name                     = "Workload-Q"
+        email                    = "workload-q@example.com"
+        organizational_unit_name = "Workloads"
+        quarantined              = true
+      },
+    ]
+  }
+
+  # Only the naming check fires: both roles match the exempt patterns.
+  expect_failures = [check.quarantined_accounts_named]
 }

@@ -61,12 +61,6 @@ terraform {
   source = "${get_repo_root()}//modules/networking"
 }
 
-dependency "config_rules" {
-  config_path  = "../config-rules"
-  skip_outputs = true
-  # Ordering dependency only — networking doesn't need config-rules outputs
-}
-
 dependency "accounts" {
   config_path = "../accounts"
 

@@ -35,23 +35,13 @@ generate "provider_override" {
   EOF
 }
 
-# The mock bucket name flows into modules/cur.s3_bucket_name, whose validation
-# requires a non-empty value — the empty string would abort validate and plan
-# in exactly the situation mock outputs exist for. Same value as in the sibling
-# stacks.
-dependency "logging" {
-  config_path = "../logging"
-
-  mock_outputs = {
-    central_log_bucket_name = "mock-central-logs"
-  }
-  mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
-}
-
+# The report goes to the dedicated bucket this unit creates
+# (enable_dedicated_bucket = true), so it needs no bucket of the logging stack
+# and no dependency on it: the unit also applies while enable_logging is false.
 inputs = {
   enable_cost_and_usage_report = local.common.locals.enable_cost_and_usage_report
   cur_config                   = local.common.locals.cur_config
-  s3_bucket_name               = dependency.logging.outputs.central_log_bucket_name
+  s3_bucket_name               = ""
   s3_bucket_region             = "us-east-1" # CUR dedicated bucket is created in us-east-1 (CUR provider region)
   enable_dedicated_bucket      = true
   force_destroy                = local.common.locals.force_destroy

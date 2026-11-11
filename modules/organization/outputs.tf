@@ -19,7 +19,7 @@ output "quarantine_scp_id" {
 # --- Ignored OU IDs ---
 
 output "ignored_ou_ids" {
-  description = "List of OU IDs marked with ignore = true, excluded from policy attachments"
+  description = "IDs of every OU marked ignore = true and of every OU below one. Accounts declared in these OUs are no deployment targets: the accounts module leaves them out of its active_* outputs and the stacks generate no provider for them. Policy attachments are unaffected."
   value       = local.ignored_ou_ids
 }
 
@@ -82,4 +82,11 @@ output "dns_suffix" {
 output "master_account_id" {
   description = "Account ID of the AWS Organizations management account"
   value       = local.master_account_id
+}
+
+# --- Quarantine OU ---
+
+output "quarantine_ou_id" {
+  description = "ID of the organizational unit named by quarantine_ou_name (empty when unset); the accounts module creates accounts marked quarantined = true inside it"
+  value       = lookup(local.ou_name_to_id, var.quarantine_ou_name, "")
 }

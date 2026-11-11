@@ -28,10 +28,10 @@ The module creates the resource types below, all of them in `main.tf`. Which of 
 The recorder's `role_arn` points at the well-known path of the service-linked
 role `AWSServiceRoleForConfig` (`role/aws-service-role/config.<dns_suffix>/`).
 The module does not create that role — whether it exists in the target account
-decides the success of the deployment. Accounts created by AWS Organizations
-or Control Tower carry it; for other accounts create it once with
+decides the success of the deployment. Create it once per account with
 `aws iam create-service-linked-role --aws-service-name config.<dns_suffix>`
-(the DNS suffix of the target partition) before applying this module.
+(the DNS suffix of the target partition) before applying this module; an
+error that the role name has been taken means it exists already.
 
 ## Usage Example
 

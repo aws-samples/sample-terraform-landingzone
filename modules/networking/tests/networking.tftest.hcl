@@ -604,11 +604,12 @@ run "networking_custom_vpc_config" {
 
     load_balancers = [
       {
-        name         = "app-alb"
-        type         = "application"
-        vpc_name     = "hub"
-        subnet_names = ["public-a"]
-        scheme       = "internal"
+        name            = "app-alb"
+        type            = "application"
+        vpc_name        = "hub"
+        security_groups = ["app-sg"]
+        subnet_names    = ["public-a"]
+        scheme          = "internal"
         listeners = [
           {
             port              = 443
@@ -1367,7 +1368,7 @@ run "networking_custom_resolver_rule_associations" {
         name = "internal.example.com"
         resolver_rules = [
           {
-            domain_name            = "onprem.example.com"
+            domain_name            = "legacy.example.com"
             target_ips             = ["10.100.0.10"]
             resolver_endpoint_name = "outbound-hub"
           }
@@ -1412,13 +1413,18 @@ run "networking_custom_resolver_rule_associations" {
   }
 
   assert {
-    condition     = aws_route53_resolver_rule.this["internal.example.com-onprem.example.com"].resolver_endpoint_id == "rslvr-out-0123456789abcdef0"
+    condition     = aws_route53_resolver_rule.this["internal.example.com-legacy.example.com"].resolver_endpoint_id == "rslvr-out-0123456789abcdef0"
     error_message = "A zone-scoped forward rule must reference the configured outbound resolver endpoint."
   }
 
   assert {
-    condition     = aws_route53_resolver_rule.this["internal.example.com-onprem.example.com"].name == "internal-example-com-onprem-example-com"
+    condition     = aws_route53_resolver_rule.this["internal.example.com-legacy.example.com"].name == "internal-example-com-legacy-example-com"
     error_message = "A zone-scoped rule name must not contain dots."
+  }
+
+  assert {
+    condition     = length(aws_route53_resolver_rule_association.zone) == 2
+    error_message = "The zone-scoped rule must be associated with both VPCs the zone is attached to."
   }
 }
 
@@ -3874,9 +3880,10 @@ run "networking_load_balancer_attributes_reach_resource" {
   variables {
     vpcs = [
       {
-        name         = "spoke"
-        cidr         = "10.31.0.0/16"
-        account_name = "workload-prod"
+        name            = "spoke"
+        cidr            = "10.31.0.0/16"
+        account_name    = "workload-prod"
+        security_groups = [{ name = "lb-sg" }]
         subnets = [
           {
             name              = "private-a"
@@ -3909,6 +3916,7 @@ run "networking_load_balancer_attributes_reach_resource" {
         name                       = "web-alb"
         type                       = "application"
         vpc_name                   = "spoke"
+        security_groups            = ["lb-sg"]
         subnet_names               = ["private-a", "private-b"]
         idle_timeout               = 120
         enable_http2               = false
@@ -4009,9 +4017,10 @@ run "networking_listener_actions_reach_resource" {
   variables {
     vpcs = [
       {
-        name         = "spoke"
-        cidr         = "10.32.0.0/16"
-        account_name = "workload-prod"
+        name            = "spoke"
+        cidr            = "10.32.0.0/16"
+        account_name    = "workload-prod"
+        security_groups = [{ name = "lb-sg" }]
         subnets = [
           {
             name              = "public-a"
@@ -4042,11 +4051,12 @@ run "networking_listener_actions_reach_resource" {
 
     load_balancers = [
       {
-        name         = "edge-alb"
-        type         = "application"
-        vpc_name     = "spoke"
-        subnet_names = ["public-a"]
-        scheme       = "internal"
+        name            = "edge-alb"
+        type            = "application"
+        vpc_name        = "spoke"
+        security_groups = ["lb-sg"]
+        subnet_names    = ["public-a"]
+        scheme          = "internal"
         listeners = [
           {
             port     = 80
@@ -4165,9 +4175,10 @@ run "networking_load_balancing_attribute_defaults_leave_plan_unchanged" {
   variables {
     vpcs = [
       {
-        name         = "spoke"
-        cidr         = "10.33.0.0/16"
-        account_name = "workload-prod"
+        name            = "spoke"
+        cidr            = "10.33.0.0/16"
+        account_name    = "workload-prod"
+        security_groups = [{ name = "lb-sg" }]
         subnets = [
           {
             name              = "private-a"
@@ -4191,10 +4202,11 @@ run "networking_load_balancing_attribute_defaults_leave_plan_unchanged" {
 
     load_balancers = [
       {
-        name         = "plain-alb"
-        type         = "application"
-        vpc_name     = "spoke"
-        subnet_names = ["private-a"]
+        name            = "plain-alb"
+        type            = "application"
+        vpc_name        = "spoke"
+        security_groups = ["lb-sg"]
+        subnet_names    = ["private-a"]
         listeners = [
           {
             port              = 443
@@ -4410,6 +4422,7 @@ run "networking_invalid_lb_desync_mitigation_mode" {
         name                   = "bad-alb"
         type                   = "application"
         vpc_name               = "spoke"
+        security_groups        = ["lb-sg"]
         subnet_names           = ["private-a"]
         desync_mitigation_mode = "paranoid"
       }
@@ -4426,6 +4439,7 @@ run "networking_invalid_lb_xff_header_processing_mode" {
         name                       = "bad-alb"
         type                       = "application"
         vpc_name                   = "spoke"
+        security_groups            = ["lb-sg"]
         subnet_names               = ["private-a"]
         xff_header_processing_mode = "rewrite"
       }
@@ -4439,11 +4453,12 @@ run "networking_invalid_lb_idle_timeout" {
   variables {
     load_balancers = [
       {
-        name         = "bad-alb"
-        type         = "application"
-        vpc_name     = "spoke"
-        subnet_names = ["private-a"]
-        idle_timeout = 4001
+        name            = "bad-alb"
+        type            = "application"
+        vpc_name        = "spoke"
+        security_groups = ["lb-sg"]
+        subnet_names    = ["private-a"]
+        idle_timeout    = 4001
       }
     ]
   }
@@ -4494,10 +4509,11 @@ run "networking_invalid_listener_action_type" {
   variables {
     load_balancers = [
       {
-        name         = "bad-alb"
-        type         = "application"
-        vpc_name     = "spoke"
-        subnet_names = ["private-a"]
+        name            = "bad-alb"
+        type            = "application"
+        vpc_name        = "spoke"
+        security_groups = ["lb-sg"]
+        subnet_names    = ["private-a"]
         listeners = [
           {
             port     = 80
@@ -4516,10 +4532,11 @@ run "networking_invalid_listener_forward_without_destination" {
   variables {
     load_balancers = [
       {
-        name         = "bad-alb"
-        type         = "application"
-        vpc_name     = "spoke"
-        subnet_names = ["private-a"]
+        name            = "bad-alb"
+        type            = "application"
+        vpc_name        = "spoke"
+        security_groups = ["lb-sg"]
+        subnet_names    = ["private-a"]
         listeners = [
           {
             port     = 80
@@ -4537,10 +4554,11 @@ run "networking_invalid_listener_fixed_response_status_code" {
   variables {
     load_balancers = [
       {
-        name         = "bad-alb"
-        type         = "application"
-        vpc_name     = "spoke"
-        subnet_names = ["private-a"]
+        name            = "bad-alb"
+        type            = "application"
+        vpc_name        = "spoke"
+        security_groups = ["lb-sg"]
+        subnet_names    = ["private-a"]
         listeners = [
           {
             port     = 80
@@ -4562,10 +4580,11 @@ run "networking_invalid_listener_fixed_response_content_type" {
   variables {
     load_balancers = [
       {
-        name         = "bad-alb"
-        type         = "application"
-        vpc_name     = "spoke"
-        subnet_names = ["private-a"]
+        name            = "bad-alb"
+        type            = "application"
+        vpc_name        = "spoke"
+        security_groups = ["lb-sg"]
+        subnet_names    = ["private-a"]
         listeners = [
           {
             port     = 80
@@ -4590,10 +4609,11 @@ run "networking_invalid_listener_redirect_status_code" {
   variables {
     load_balancers = [
       {
-        name         = "bad-alb"
-        type         = "application"
-        vpc_name     = "spoke"
-        subnet_names = ["private-a"]
+        name            = "bad-alb"
+        type            = "application"
+        vpc_name        = "spoke"
+        security_groups = ["lb-sg"]
+        subnet_names    = ["private-a"]
         listeners = [
           {
             port     = 80
@@ -4615,10 +4635,11 @@ run "networking_invalid_listener_action_order_and_stickiness_bounds" {
   variables {
     load_balancers = [
       {
-        name         = "bad-alb"
-        type         = "application"
-        vpc_name     = "spoke"
-        subnet_names = ["private-a"]
+        name            = "bad-alb"
+        type            = "application"
+        vpc_name        = "spoke"
+        security_groups = ["lb-sg"]
+        subnet_names    = ["private-a"]
         listeners = [
           {
             port              = 80
@@ -4691,11 +4712,12 @@ run "networking_internet_facing_alb_without_edge_refused" {
     authenticated_edge_allowed_issuers = ["https://idp.example.com"]
     load_balancers = [
       {
-        name         = "edge-alb"
-        type         = "application"
-        vpc_name     = "spoke"
-        subnet_names = ["public-a"]
-        scheme       = "internet-facing"
+        name            = "edge-alb"
+        type            = "application"
+        vpc_name        = "spoke"
+        security_groups = ["lb-sg"]
+        subnet_names    = ["public-a"]
+        scheme          = "internet-facing"
         listeners = [
           {
             port              = 443
@@ -4719,11 +4741,12 @@ run "networking_internet_facing_alb_plaintext_listener_refused" {
     authenticated_edge_allowed_issuers = ["https://idp.example.com"]
     load_balancers = [
       {
-        name         = "edge-alb"
-        type         = "application"
-        vpc_name     = "spoke"
-        subnet_names = ["public-a"]
-        scheme       = "internet-facing"
+        name            = "edge-alb"
+        type            = "application"
+        vpc_name        = "spoke"
+        security_groups = ["lb-sg"]
+        subnet_names    = ["public-a"]
+        scheme          = "internet-facing"
         listeners = [
           {
             port     = 80
@@ -4771,10 +4794,11 @@ run "networking_authenticated_edge_without_client_secret_refused" {
     authenticated_edge_allowed_issuers = ["https://idp.example.com"]
     load_balancers = [
       {
-        name         = "tools-alb"
-        type         = "application"
-        vpc_name     = "spoke"
-        subnet_names = ["private-a"]
+        name            = "tools-alb"
+        type            = "application"
+        vpc_name        = "spoke"
+        security_groups = ["lb-sg"]
+        subnet_names    = ["private-a"]
         listeners = [
           {
             port              = 443
@@ -4810,9 +4834,10 @@ run "networking_internet_facing_alb_with_edge_authenticates_first" {
 
     vpcs = [
       {
-        name         = "spoke"
-        cidr         = "10.34.0.0/16"
-        account_name = "workload-prod"
+        name            = "spoke"
+        cidr            = "10.34.0.0/16"
+        account_name    = "workload-prod"
+        security_groups = [{ name = "lb-sg" }]
         subnets = [
           {
             name              = "public-a"
@@ -4856,11 +4881,12 @@ run "networking_internet_facing_alb_with_edge_authenticates_first" {
 
     load_balancers = [
       {
-        name         = "edge-alb"
-        type         = "application"
-        vpc_name     = "spoke"
-        subnet_names = ["public-a"]
-        scheme       = "internet-facing"
+        name            = "edge-alb"
+        type            = "application"
+        vpc_name        = "spoke"
+        security_groups = ["lb-sg"]
+        subnet_names    = ["public-a"]
+        scheme          = "internet-facing"
         listeners = [
           {
             port              = 443
@@ -4902,10 +4928,11 @@ run "networking_internet_facing_alb_with_edge_authenticates_first" {
         ]
       },
       {
-        name         = "tools-alb"
-        type         = "application"
-        vpc_name     = "spoke"
-        subnet_names = ["private-a"]
+        name            = "tools-alb"
+        type            = "application"
+        vpc_name        = "spoke"
+        security_groups = ["lb-sg"]
+        subnet_names    = ["private-a"]
         listeners = [
           {
             port              = 443
@@ -5021,11 +5048,12 @@ run "networking_authenticated_edge_untrusted_issuer_refused" {
     authenticated_edge_allowed_issuers = ["https://idp.example.com"]
     load_balancers = [
       {
-        name         = "edge-alb"
-        type         = "application"
-        vpc_name     = "spoke"
-        subnet_names = ["public-a"]
-        scheme       = "internet-facing"
+        name            = "edge-alb"
+        type            = "application"
+        vpc_name        = "spoke"
+        security_groups = ["lb-sg"]
+        subnet_names    = ["public-a"]
+        scheme          = "internet-facing"
         listeners = [
           {
             port              = 443
@@ -5056,11 +5084,12 @@ run "networking_internet_facing_alb_with_empty_issuer_allowlist_refused" {
     authenticated_edge_allowed_issuers = []
     load_balancers = [
       {
-        name         = "edge-alb"
-        type         = "application"
-        vpc_name     = "spoke"
-        subnet_names = ["public-a"]
-        scheme       = "internet-facing"
+        name            = "edge-alb"
+        type            = "application"
+        vpc_name        = "spoke"
+        security_groups = ["lb-sg"]
+        subnet_names    = ["public-a"]
+        scheme          = "internet-facing"
         listeners = [
           {
             port              = 443
@@ -5091,10 +5120,11 @@ run "networking_internal_alb_edge_untrusted_issuer_refused" {
     authenticated_edge_allowed_issuers = ["https://idp.example.com"]
     load_balancers = [
       {
-        name         = "tools-alb"
-        type         = "application"
-        vpc_name     = "spoke"
-        subnet_names = ["private-a"]
+        name            = "tools-alb"
+        type            = "application"
+        vpc_name        = "spoke"
+        security_groups = ["lb-sg"]
+        subnet_names    = ["private-a"]
         listeners = [
           {
             port              = 443
@@ -5126,10 +5156,11 @@ run "networking_edge_issuer_trailing_slash_refused" {
     authenticated_edge_allowed_issuers = ["https://idp.example.com"]
     load_balancers = [
       {
-        name         = "tools-alb"
-        type         = "application"
-        vpc_name     = "spoke"
-        subnet_names = ["private-a"]
+        name            = "tools-alb"
+        type            = "application"
+        vpc_name        = "spoke"
+        security_groups = ["lb-sg"]
+        subnet_names    = ["private-a"]
         listeners = [
           {
             port              = 443
@@ -5160,10 +5191,11 @@ run "networking_edge_issuer_case_difference_refused" {
     authenticated_edge_allowed_issuers = ["https://idp.example.com"]
     load_balancers = [
       {
-        name         = "tools-alb"
-        type         = "application"
-        vpc_name     = "spoke"
-        subnet_names = ["private-a"]
+        name            = "tools-alb"
+        type            = "application"
+        vpc_name        = "spoke"
+        security_groups = ["lb-sg"]
+        subnet_names    = ["private-a"]
         listeners = [
           {
             port              = 443
@@ -5388,9 +5420,10 @@ run "networking_internal_lb_without_edge_unchanged" {
   variables {
     vpcs = [
       {
-        name         = "spoke"
-        cidr         = "10.35.0.0/16"
-        account_name = "workload-prod"
+        name            = "spoke"
+        cidr            = "10.35.0.0/16"
+        account_name    = "workload-prod"
+        security_groups = [{ name = "lb-sg" }]
         subnets = [
           {
             name              = "private-a"
@@ -5421,10 +5454,11 @@ run "networking_internal_lb_without_edge_unchanged" {
 
     load_balancers = [
       {
-        name         = "plain-alb"
-        type         = "application"
-        vpc_name     = "spoke"
-        subnet_names = ["private-a"]
+        name            = "plain-alb"
+        type            = "application"
+        vpc_name        = "spoke"
+        security_groups = ["lb-sg"]
+        subnet_names    = ["private-a"]
         listeners = [
           {
             port              = 443
@@ -14901,10 +14935,11 @@ run "regression_listener_protocol_lowercase_https_refused" {
 
     load_balancers = [
       {
-        name         = "web-alb"
-        type         = "application"
-        vpc_name     = "spoke"
-        subnet_names = ["private-a", "private-b"]
+        name            = "web-alb"
+        type            = "application"
+        vpc_name        = "spoke"
+        security_groups = ["lb-sg"]
+        subnet_names    = ["private-a", "private-b"]
         listeners = [
           {
             port              = 443
@@ -15218,4 +15253,542 @@ run "regression_firewall_stateless_priority_follows_name_order" {
     }
     error_message = "Without stateless_rule_groups, the stateless priorities must follow the lexical order of the group names: aa-second 10, zz-first 20."
   }
+}
+
+# -----------------------------------------------------------------------------
+# Regressions — DNS rule associations, load balancer groups, DNS firewall
+# priorities, IPAM-fed CIDRs, NAT zone affinity, stable rule keys
+# -----------------------------------------------------------------------------
+
+# A zone-scoped forwarding rule takes effect only in the VPCs it is associated
+# with. With vpc_ids empty the zone is attached to every VPC of the module, and
+# so is its rule.
+run "regression_zone_resolver_rule_associated_with_zone_vpcs" {
+  command = plan
+
+  override_resource {
+    target          = aws_route53_resolver_rule.this
+    override_during = plan
+    values = {
+      id = "rslvr-rr-zone0123456789"
+    }
+  }
+
+  variables {
+    vpcs = [
+      {
+        name         = "hub"
+        cidr         = "10.0.0.0/16"
+        account_name = "network"
+        subnets = [
+          { name = "private-a", cidr = "10.0.2.0/24", availability_zone = "eu-central-1a", type = "private" },
+          { name = "private-b", cidr = "10.0.3.0/24", availability_zone = "eu-central-1b", type = "private" },
+        ]
+      },
+      {
+        name         = "spoke"
+        cidr         = "10.2.0.0/16"
+        account_name = "workload-prod"
+        subnets = [
+          { name = "private-a", cidr = "10.2.1.0/24", availability_zone = "eu-central-1a", type = "private" },
+        ]
+      },
+    ]
+
+    resolver_endpoints = [
+      {
+        name         = "outbound-hub"
+        direction    = "OUTBOUND"
+        vpc_name     = "hub"
+        subnet_names = ["private-a", "private-b"]
+      }
+    ]
+
+    route53_zones = [
+      {
+        name = "internal.example.com"
+        resolver_rules = [
+          { domain_name = "onprem.example.com", target_ips = ["10.100.0.10"], resolver_endpoint_name = "outbound-hub" }
+        ]
+      }
+    ]
+  }
+
+  assert {
+    condition     = toset(keys(aws_route53_resolver_rule_association.zone)) == toset(["internal.example.com-onprem.example.com.hub", "internal.example.com-onprem.example.com.spoke"])
+    error_message = "A zone-scoped rule must be associated with every VPC the zone is attached to (both VPCs of the module)."
+  }
+
+  assert {
+    condition     = aws_route53_resolver_rule_association.zone["internal.example.com-onprem.example.com.hub"].resolver_rule_id == "rslvr-rr-zone0123456789" && aws_route53_resolver_rule_association.zone["internal.example.com-onprem.example.com.hub"].name == "internal-example-com-onprem-example-com-hub"
+    error_message = "The association must reference the zone-scoped rule and carry the map key with dots replaced by hyphens as its name."
+  }
+}
+
+# A zone with vpc_ids is attached to exactly those VPCs, and so is its rule.
+run "regression_zone_resolver_rule_follows_zone_vpc_ids" {
+  command = plan
+
+  variables {
+    vpcs = [
+      {
+        name         = "hub"
+        cidr         = "10.0.0.0/16"
+        account_name = "network"
+        subnets = [
+          { name = "private-a", cidr = "10.0.2.0/24", availability_zone = "eu-central-1a", type = "private" },
+          { name = "private-b", cidr = "10.0.3.0/24", availability_zone = "eu-central-1b", type = "private" },
+        ]
+      },
+    ]
+
+    resolver_endpoints = [
+      { name = "outbound-hub", direction = "OUTBOUND", vpc_name = "hub", subnet_names = ["private-a", "private-b"] }
+    ]
+
+    route53_zones = [
+      {
+        name    = "internal.example.com"
+        vpc_ids = ["vpc-0123456789abcdef0"]
+        resolver_rules = [
+          { domain_name = "onprem.example.com", target_ips = ["10.100.0.10"], resolver_endpoint_name = "outbound-hub" }
+        ]
+      }
+    ]
+  }
+
+  assert {
+    condition     = keys(aws_route53_resolver_rule_association.zone) == ["internal.example.com-onprem.example.com.vpc-0123456789abcdef0"] && aws_route53_resolver_rule_association.zone["internal.example.com-onprem.example.com.vpc-0123456789abcdef0"].vpc_id == "vpc-0123456789abcdef0"
+    error_message = "With vpc_ids set, the zone-scoped rule must be associated with exactly the listed VPCs."
+  }
+}
+
+# A zone-scoped rule for a domain that an endpoint or standalone rule already
+# forwards in the same VPC is reported by the check block.
+run "regression_zone_resolver_rule_domain_conflict_reported" {
+  command = plan
+
+  variables {
+    vpcs = [
+      {
+        name         = "hub"
+        cidr         = "10.0.0.0/16"
+        account_name = "network"
+        subnets = [
+          { name = "private-a", cidr = "10.0.2.0/24", availability_zone = "eu-central-1a", type = "private" },
+          { name = "private-b", cidr = "10.0.3.0/24", availability_zone = "eu-central-1b", type = "private" },
+        ]
+      },
+    ]
+
+    resolver_endpoints = [
+      { name = "outbound-hub", direction = "OUTBOUND", vpc_name = "hub", subnet_names = ["private-a", "private-b"] }
+    ]
+
+    resolver_rules = [
+      { name = "onprem-system", domain_name = "onprem.example.com.", rule_type = "SYSTEM", vpc_names = ["hub"] }
+    ]
+
+    route53_zones = [
+      {
+        name = "internal.example.com"
+        resolver_rules = [
+          { domain_name = "onprem.example.com", target_ips = ["10.100.0.10"], resolver_endpoint_name = "outbound-hub" }
+        ]
+      }
+    ]
+  }
+
+  expect_failures = [check.zone_resolver_rule_domain_once_per_vpc]
+}
+
+# An application load balancer without a security group would get the VPC's
+# default group, which the module strips of every rule.
+run "regression_alb_without_security_groups_refused" {
+  command = plan
+
+  variables {
+    vpcs = [
+      {
+        name         = "hub"
+        cidr         = "10.0.0.0/16"
+        account_name = "network"
+        subnets = [
+          { name = "private-a", cidr = "10.0.2.0/24", availability_zone = "eu-central-1a", type = "private" },
+          { name = "private-b", cidr = "10.0.3.0/24", availability_zone = "eu-central-1b", type = "private" },
+        ]
+      },
+    ]
+
+    load_balancers = [
+      {
+        name         = "app-alb"
+        type         = "application"
+        vpc_name     = "hub"
+        subnet_names = ["private-a", "private-b"]
+        listeners = [
+          { port = 80, protocol = "HTTP", action = { type = "fixed-response", fixed_response = { content_type = "text/plain", status_code = "200" } } }
+        ]
+      }
+    ]
+  }
+
+  expect_failures = [var.load_balancers]
+}
+
+# Two DNS firewall rule groups on one VPC need two different association
+# priorities. The first group keeps the priorities it had before.
+run "regression_dns_firewall_two_groups_one_vpc_unique_priority" {
+  command = plan
+
+  variables {
+    vpcs = [
+      {
+        name         = "hub"
+        cidr         = "10.0.0.0/16"
+        account_name = "network"
+        subnets      = [{ name = "private-a", cidr = "10.0.2.0/24", availability_zone = "eu-central-1a", type = "private" }]
+      },
+      {
+        name         = "spoke"
+        cidr         = "10.2.0.0/16"
+        account_name = "workload-prod"
+        subnets      = [{ name = "private-a", cidr = "10.2.1.0/24", availability_zone = "eu-central-1a", type = "private" }]
+      },
+    ]
+
+    dns_firewall_rule_groups = [
+      {
+        name                = "allowlist"
+        vpc_names           = ["hub", "spoke"]
+        custom_domain_lists = [{ name = "allowed", domains = ["example.com"] }]
+        rules               = [{ name = "allow", priority = 100, action = "ALLOW", custom_domain_list_name = "allowed" }]
+      },
+      {
+        name                = "blocklist"
+        vpc_names           = ["hub"]
+        custom_domain_lists = [{ name = "blocked", domains = ["malware.example.com"] }]
+        rules               = [{ name = "block", priority = 100, action = "BLOCK", custom_domain_list_name = "blocked" }]
+      },
+    ]
+  }
+
+  assert {
+    condition     = aws_route53_resolver_firewall_rule_group_association.this["allowlist.hub"].priority == 100 && aws_route53_resolver_firewall_rule_group_association.this["allowlist.spoke"].priority == 101
+    error_message = "The first rule group must keep the priorities that follow its vpc_names positions (100, 101)."
+  }
+
+  assert {
+    condition     = aws_route53_resolver_firewall_rule_group_association.this["blocklist.hub"].priority == 200
+    error_message = "A second rule group on the same VPC must get a priority of its own (200), not the first group's 100."
+  }
+}
+
+# The interface endpoint security group of an IPAM-fed VPC reads the VPC's
+# allocated CIDR; the configured cidr is empty there.
+run "regression_ipam_vpc_with_interface_endpoint_plans" {
+  command = plan
+
+  variables {
+    ipam = {
+      enabled = true
+      pools   = [{ name = "workload", cidr = "10.0.0.0/16" }]
+    }
+
+    vpcs = [
+      {
+        name                = "ipam-vpc"
+        ipam_pool_name      = "workload"
+        ipam_netmask_length = 20
+        account_name        = "network"
+        subnets = [
+          { name = "private-a", ipam_pool_name = "workload", ipam_netmask_length = 24, availability_zone = "eu-central-1a", type = "private" }
+        ]
+        interface_endpoints = [{ service = "ssm" }]
+      },
+      {
+        name                = "static"
+        cidr                = "10.50.0.0/16"
+        account_name        = "network"
+        subnets             = [{ name = "private-a", cidr = "10.50.1.0/24", availability_zone = "eu-central-1a", type = "private" }]
+        interface_endpoints = [{ service = "ssm" }]
+      },
+    ]
+  }
+
+  assert {
+    condition     = length(aws_vpc_security_group_ingress_rule.interface_endpoint_https) == 2
+    error_message = "Both VPCs must get the HTTPS rule of their interface endpoint security group."
+  }
+
+  assert {
+    condition     = aws_vpc_security_group_ingress_rule.interface_endpoint_https["static"].cidr_ipv4 == "10.50.0.0/16"
+    error_message = "A VPC with a static cidr must keep that cidr as the source of the HTTPS rule."
+  }
+}
+
+# Peering routes towards an IPAM-fed VPC read the VPC's allocated CIDR.
+run "regression_peering_with_ipam_vpc_plans" {
+  command = plan
+
+  variables {
+    ipam = {
+      enabled = true
+      pools   = [{ name = "workload", cidr = "10.0.0.0/16" }]
+    }
+
+    vpcs = [
+      {
+        name         = "hub"
+        cidr         = "10.50.0.0/16"
+        account_name = "network"
+        subnets      = [{ name = "private-a", cidr = "10.50.1.0/24", availability_zone = "eu-central-1a", type = "private" }]
+      },
+      {
+        name                = "spoke"
+        ipam_pool_name      = "workload"
+        ipam_netmask_length = 20
+        account_name        = "network"
+        subnets = [
+          { name = "private-a", ipam_pool_name = "workload", ipam_netmask_length = 24, availability_zone = "eu-central-1a", type = "private" }
+        ]
+      },
+    ]
+
+    vpc_peering = [
+      { name = "hub-to-spoke", requester_vpc_name = "hub", accepter_vpc_name = "spoke" }
+    ]
+  }
+
+  assert {
+    condition     = length(aws_route.peering) == 2
+    error_message = "Both directions of the peering must get their route."
+  }
+
+  assert {
+    condition     = aws_route.peering["hub-to-spoke.acc.spoke.private-a"].destination_cidr_block == "10.50.0.0/16"
+    error_message = "The route towards a VPC with a static cidr must keep that cidr as its destination."
+  }
+}
+
+# A private subnet routes through the NAT gateway of its own zone when the VPC
+# has one there, and through the VPC's first NAT gateway otherwise.
+run "regression_private_subnet_uses_nat_gateway_of_its_zone" {
+  command = apply
+
+  variables {
+    vpcs = [
+      {
+        name         = "hub"
+        cidr         = "10.0.0.0/16"
+        account_name = "network"
+        subnets = [
+          { name = "public-a", cidr = "10.0.0.0/24", availability_zone = "eu-central-1a", type = "public", nat_gateway = true },
+          { name = "public-b", cidr = "10.0.1.0/24", availability_zone = "eu-central-1b", type = "public", nat_gateway = true },
+          { name = "private-a", cidr = "10.0.2.0/24", availability_zone = "eu-central-1a", type = "private" },
+          { name = "private-b", cidr = "10.0.3.0/24", availability_zone = "eu-central-1b", type = "private" },
+          { name = "private-c", cidr = "10.0.4.0/24", availability_zone = "eu-central-1c", type = "private" },
+        ]
+      },
+    ]
+  }
+
+  assert {
+    condition     = aws_route.private_nat["hub.private-a"].nat_gateway_id == aws_nat_gateway.this["hub.public-a"].id && aws_route.private_nat["hub.private-b"].nat_gateway_id == aws_nat_gateway.this["hub.public-b"].id
+    error_message = "Each private subnet must route through the NAT gateway in its own zone."
+  }
+
+  assert {
+    condition     = aws_route.private_nat["hub.private-c"].nat_gateway_id == aws_nat_gateway.this["hub.public-a"].id
+    error_message = "A private subnet in a zone without a NAT gateway must route through the VPC's first NAT gateway."
+  }
+}
+
+# Named security group rules and routes keep their resource key when other
+# entries of the same list are removed; unnamed entries keep the index key.
+run "regression_named_rules_keep_their_key" {
+  command = plan
+
+  variables {
+    vpcs = [
+      {
+        name         = "hub"
+        cidr         = "10.0.0.0/16"
+        account_name = "network"
+        subnets = [
+          {
+            name              = "private-a"
+            cidr              = "10.0.2.0/24"
+            availability_zone = "eu-central-1a"
+            type              = "private"
+            custom_routes = [
+              { name = "corp", destination_cidr_block = "10.90.0.0/16", target_type = "eni", target_name = "eni-0123456789abcdef0" },
+              { destination_cidr_block = "10.91.0.0/16", target_type = "eni", target_name = "eni-0123456789abcdef0" },
+            ]
+          }
+        ]
+        security_groups = [
+          {
+            name = "app-sg"
+            ingress = [
+              { name = "https", protocol = "tcp", from_port = 443, to_port = 443, cidr_blocks = ["10.0.0.0/16"] },
+              { name = "ssh", protocol = "tcp", from_port = 22, to_port = 22, cidr_blocks = ["10.0.0.0/16"] },
+              { protocol = "tcp", from_port = 8080, to_port = 8080, cidr_blocks = ["10.0.0.0/16"] },
+            ]
+          }
+        ]
+      },
+    ]
+  }
+
+  assert {
+    condition     = toset(keys(aws_security_group_rule.ingress_cidr)) == toset(["hub.app-sg.ingress.https", "hub.app-sg.ingress.ssh", "hub.app-sg.ingress.2"])
+    error_message = "A named rule must be keyed by its name, an unnamed one by its list index."
+  }
+
+  assert {
+    condition     = toset(keys(aws_route.custom)) == toset(["hub.private-a.corp", "hub.private-a.1"])
+    error_message = "A named route must be keyed by its name, an unnamed one by its list index."
+  }
+}
+
+run "regression_named_rule_key_survives_removal_of_an_earlier_rule" {
+  command = plan
+
+  variables {
+    vpcs = [
+      {
+        name         = "hub"
+        cidr         = "10.0.0.0/16"
+        account_name = "network"
+        subnets      = [{ name = "private-a", cidr = "10.0.2.0/24", availability_zone = "eu-central-1a", type = "private" }]
+        security_groups = [
+          {
+            name = "app-sg"
+            ingress = [
+              { name = "ssh", protocol = "tcp", from_port = 22, to_port = 22, cidr_blocks = ["10.0.0.0/16"] },
+            ]
+          }
+        ]
+      },
+    ]
+  }
+
+  assert {
+    condition     = keys(aws_security_group_rule.ingress_cidr) == ["hub.app-sg.ingress.ssh"] && aws_security_group_rule.ingress_cidr["hub.app-sg.ingress.ssh"].from_port == 22
+    error_message = "Removing the https rule must leave the ssh rule under its own key."
+  }
+}
+
+run "regression_rule_names_must_be_unique_and_start_with_a_letter" {
+  command = plan
+
+  variables {
+    vpcs = [
+      {
+        name         = "hub"
+        cidr         = "10.0.0.0/16"
+        account_name = "network"
+        subnets      = [{ name = "private-a", cidr = "10.0.2.0/24", availability_zone = "eu-central-1a", type = "private" }]
+        security_groups = [
+          {
+            name = "app-sg"
+            ingress = [
+              { name = "web", protocol = "tcp", from_port = 443, to_port = 443, cidr_blocks = ["10.0.0.0/16"] },
+              { name = "web", protocol = "tcp", from_port = 80, to_port = 80, cidr_blocks = ["10.0.0.0/16"] },
+            ]
+          }
+        ]
+      },
+    ]
+  }
+
+  expect_failures = [var.vpcs]
+}
+
+run "regression_numeric_rule_name_refused" {
+  command = plan
+
+  variables {
+    vpcs = [
+      {
+        name         = "hub"
+        cidr         = "10.0.0.0/16"
+        account_name = "network"
+        subnets = [
+          {
+            name              = "private-a"
+            cidr              = "10.0.2.0/24"
+            availability_zone = "eu-central-1a"
+            type              = "private"
+            custom_routes     = [{ name = "1", destination_cidr_block = "10.90.0.0/16", target_type = "eni", target_name = "eni-0123456789abcdef0" }]
+          }
+        ]
+      },
+    ]
+  }
+
+  expect_failures = [var.vpcs]
+}
+
+# The README usage example plans: its Transit Gateway attachment has a subnet
+# whose name contains "tgw".
+run "regression_readme_usage_example_plans" {
+  command = plan
+
+  variables {
+    vpcs = [
+      {
+        name         = "shared-services"
+        cidr         = "10.0.0.0/16"
+        account_name = "SharedServices"
+        tags         = { Application = "platform" }
+        subnets = [
+          { name = "public-a", cidr = "10.0.1.0/24", availability_zone = "eu-central-1a", type = "public", nat_gateway = true },
+          { name = "private-a", cidr = "10.0.10.0/24", availability_zone = "eu-central-1a", type = "private" },
+          { name = "isolated-a", cidr = "10.0.20.0/24", availability_zone = "eu-central-1a", type = "isolated" },
+          { name = "tgw-a", cidr = "10.0.30.0/28", availability_zone = "eu-central-1a", type = "isolated" },
+        ]
+        tgw_attachment = { route_table_name = "shared" }
+        flow_logs      = { destination = "s3" }
+      },
+    ]
+
+    transit_gateway = {
+      enabled      = true
+      route_tables = ["shared", "segregated"]
+    }
+
+    central_log_bucket_name = "my-central-logs-bucket"
+  }
+
+  assert {
+    condition     = length(aws_ec2_transit_gateway_vpc_attachment.this) == 1
+    error_message = "The README usage example must plan its Transit Gateway attachment."
+  }
+}
+
+# A Transit Gateway attachment without a subnet is refused at plan instead of
+# failing in the provider.
+run "regression_tgw_attachment_without_subnet_refused" {
+  command = plan
+
+  variables {
+    vpcs = [
+      {
+        name           = "shared-services"
+        cidr           = "10.0.0.0/16"
+        account_name   = "SharedServices"
+        subnets        = [{ name = "private-a", cidr = "10.0.10.0/24", availability_zone = "eu-central-1a", type = "private" }]
+        tgw_attachment = { route_table_name = "shared" }
+      },
+    ]
+
+    transit_gateway = {
+      enabled      = true
+      route_tables = ["shared"]
+    }
+  }
+
+  expect_failures = [var.transit_gateway]
 }

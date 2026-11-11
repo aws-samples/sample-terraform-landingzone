@@ -95,25 +95,39 @@ output "warm_account_names" {
 
 # --- Active Accounts (deployment targets) ---
 # Warm accounts are created in AWS Organizations but skip security and
-# networking configuration. Downstream stacks read these filtered pendants
+# networking configuration; suspended accounts (declared in an OU the
+# organization module reports in ignored_ou_ids) are created and kept, but
+# no stack configures them. Downstream stacks read these filtered pendants
 # as their deployment targets instead of the raw maps above. While
-# enable_account_warming is false, warm_account_names is empty, so both
-# pendants are identical to the raw outputs (zero-diff).
+# enable_account_warming is false and no account is declared in an ignored
+# OU, both pendants are identical to the raw outputs (zero-diff).
+
+output "suspended_account_names" {
+  description = "Names of the accounts declared in an ignored OU — these are no deployment targets and skip every downstream configuration"
+  value       = local.suspended_account_names
+}
 
 output "active_account_ids" {
-  description = "Map of account name to account ID excluding warm accounts — the deployment targets for downstream stacks"
+  description = "Map of account name to account ID excluding warm and suspended accounts — the deployment targets for downstream stacks"
   value = {
     for email, acct in aws_organizations_account.this :
     acct.name => acct.id
-    if !contains(local.warm_account_names, acct.name)
+    if !contains(local.warm_account_names, acct.name) && !contains(local.suspended_account_names, acct.name)
   }
 }
 
 output "active_account_ou_ids" {
-  description = "Map of account name to its OU (parent) ID excluding warm accounts — OU-resolved deployment targets for downstream stacks"
+  description = "Map of account name to its declared OU ID excluding warm and suspended accounts — OU-resolved deployment targets for downstream stacks. A quarantined account keeps its declared OU here while it sits in the quarantine OU"
   value = {
     for email, acct in aws_organizations_account.this :
-    acct.name => acct.parent_id
-    if !contains(local.warm_account_names, acct.name)
+    acct.name => local.resolved_accounts[email].target_ou_id
+    if !contains(local.warm_account_names, acct.name) && !contains(local.suspended_account_names, acct.name)
   }
+}
+
+# --- Quarantined Accounts ---
+
+output "quarantined_account_names" {
+  description = "Names of accounts marked quarantined = true; they are created inside the quarantine OU and released by quarantined = false"
+  value       = local.quarantined_account_names
 }

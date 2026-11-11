@@ -356,7 +356,7 @@ variable "session_manager_cloudwatch_log_group" {
 # --- Session Manager IAM Policy Attachment ---
 
 variable "session_manager_attach_policy_to_roles" {
-  description = "List of IAM role names to attach the Session Manager IAM policy to. Empty list skips policy creation."
+  description = "List of IAM role names to attach the Session Manager IAM policy to. Empty list skips policy creation. A role that the iam unit creates cannot be named here on a first apply: the security unit applies before iam, so the role does not exist yet; add it on a later apply."
   type        = list(string)
   default     = []
 
@@ -433,6 +433,12 @@ variable "central_log_bucket_name" {
     condition     = var.central_log_bucket_name == "" || can(regex("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.central_log_bucket_name))
     error_message = "central_log_bucket_name must be empty or a valid S3 bucket name (3-63 lowercase characters, digits, dot or hyphen, starting and ending alphanumeric)."
   }
+}
+
+variable "manage_finding_consumers" {
+  description = "Create the finding consumers in this account: the GuardDuty findings export, the Macie classification export, the Security Hub finding aggregator and the automation rules. false leaves them to the delegated administrator (modules/security-org-config in the Audit account), where they reach every member account's findings; the detector, Security Hub account, standards, disabled controls and the export lifecycle rules stay here either way. The management stack passes false once the Audit account resolves and security_finding_consumers_in_audit is on."
+  type        = bool
+  default     = true
 }
 
 # --- Security Hub Automation Rules ---
@@ -823,6 +829,13 @@ variable "security_hub_automation_rules" {
       )
     ])
     error_message = "Each related_findings entry in security_hub_automation_rules needs a non-empty id and a product_arn beginning with arn:<partition>:securityhub:."
+  }
+
+  # Security Hub allows 100 automation rules per account and Region; the 101st
+  # CreateAutomationRule fails at apply, after the first hundred exist.
+  validation {
+    condition     = length(var.security_hub_automation_rules) <= 100
+    error_message = "security_hub_automation_rules holds more than 100 rules — Security Hub allows 100 automation rules per account and Region."
   }
 }
 

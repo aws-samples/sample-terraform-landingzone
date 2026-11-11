@@ -151,8 +151,10 @@ resource "aws_vpc_security_group_ingress_rule" "interface_endpoint_https" {
     if length(vpc.interface_endpoints) > 0
   }
 
+  # cidr_ipv4 is the VPC's own CIDR: the configured one, or the range an IPAM
+  # pool allocated (cidr is empty for an IPAM-fed VPC).
   security_group_id = aws_security_group.interface_endpoint[each.key].id
-  cidr_ipv4         = each.value.cidr
+  cidr_ipv4         = aws_vpc.this[each.key].cidr_block
   from_port         = 443
   to_port           = 443
   ip_protocol       = "tcp"

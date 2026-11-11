@@ -6,6 +6,17 @@ The alerts topic's policy and its CMK admit `budgets.amazonaws.com`, so an
 AWS Budgets notification can be subscribed to the topic — an operator opt-in:
 the shipped example wires budget notifications by e-mail, not SNS.
 
+The module runs twice in the shipped stacks: in the management account
+(`stacks/management/monitoring`, everything) and — with
+`security_finding_consumers_in_audit` in `env/common.hcl`, default true — in
+the Audit account (`stacks/audit/monitoring`, the alerting part only: GuardDuty
+and Security Hub EventBridge rules, SNS topics and key, the configured log
+groups and the findings dashboard). The Audit account is the delegated
+administrator of GuardDuty and Security Hub, so its EventBridge bus carries
+every member account's findings; the management bus carries only the
+management account's own. The EventBridge rules of this module are
+account-local and need no further input for that.
+
 ## Inputs
 
 | Name | Description | Type | Default | Required |

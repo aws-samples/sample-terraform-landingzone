@@ -14,7 +14,8 @@ The ECS variant has a different source model, see [ECS variant trigger](#ecs-var
 | `repository_name` | Repository the pipeline sources from. codepipeline: full repository ID of the CodeConnections source (`owner/repo`). ecs: name of the CodeCommit repository in this account whose pushes trigger the task (letters, digits, `.` `_` `-`; no slash). `*` and `?` are refused: the external variant's OIDC subject condition is a `StringLike` | `string` | — | yes |
 | `source_connection_arn` | ARN of the existing CodeConnections/CodeStar connection that provides the pipeline source. Required for `pipeline_type = "codepipeline"`; must stay empty for `pipeline_type = "ecs"` | `string` | `""` | no |
 | `branch_name` | Branch name to trigger the pipeline on. `*` and `?` are refused, as on `repository_name` | `string` | `"main"` | no |
-| `deployment_role_arns` | Map of account name to Deployment Role ARN for cross-account access | `map(string)` | — | yes |
+| `deployment_role_arns` | Map of account name to Deployment Role ARN for cross-account access. The key `management` is required: the pipeline's profile assumes that role before Terragrunt starts — see [Credentials of the pipeline](#credentials-of-the-pipeline) | `map(string)` | — | yes |
+| `aws_profile` | Name of the AWS profile the stacks run with (the `aws_profile` of `env/common.hcl`). The build writes a profile of this name into the container before Terragrunt starts; it assumes `deployment_role_arns["management"]` with the container's own credentials. Non-empty, no quotes or whitespace — see [Credentials of the pipeline](#credentials-of-the-pipeline) | `string` | — | yes |
 | `approval_notification_email` | Email address for pipeline approval notifications | `string` | `""` | no |
 | `enable_pipeline_notifications` | Publish pipeline execution state changes to the approval SNS topic via EventBridge rules (CodePipeline variant); see [State-Change Notifications](#state-change-notifications) | `bool` | `false` | no |
 | `pipeline_notification_states` | Pipeline execution states reported when `enable_pipeline_notifications` is set; one EventBridge rule per state | `list(string)` | `["STARTED", "SUCCEEDED", "FAILED", "SUPERSEDED", "CANCELED"]` | no |
@@ -153,6 +154,34 @@ these before its first assertion, which is the harmless failure mode.
 **Leave the defaults unchanged in production** — a changed default is a
 destroy/create of the deployed resource (for a topic, subscriptions included).
 
+## Credentials of the pipeline
+
+Terragrunt renders every unit's `provider.tf` and `backend.tf` with `profile = "<aws_profile>"` — for an operator and for the pipeline alike. A build container has no such profile, so the pipeline writes one before its first `terragrunt` command and then walks the operator's path: the profile is a management-account identity (it assumes the management deployment role), the member access roles and the state bucket's role are assumed from it.
+
+- **codepipeline** and **ecs**: the build steps (`codepipeline.tf`) and the task command (`ecs.tf`) write `~/.aws/config` from the module inputs:
+
+  ```ini
+  [profile <aws_profile>]
+  role_arn = <deployment_role_arns["management"]>
+  credential_source = EcsContainer
+  role_session_name = tlz-pipeline
+  region = <region>
+  ```
+
+  `credential_source = EcsContainer` is the role CodeBuild or ECS attached to the container (the CodeBuild service role, the ECS task role); both services set the container credential variables the SDK reads. Nothing else is configured in the container.
+
+- **external** (GitHub Actions, GitLab CI): the module writes no file. The runner's credentials step (for example `configure-aws-credentials`) exports the OIDC session of `TLZExternalCIRole` into the environment, and the runner writes the same profile with `credential_source = Environment` instead of `EcsContainer` before it starts Terragrunt:
+
+  ```ini
+  [profile <aws_profile>]
+  role_arn = <deployment_role_arns["management"]>
+  credential_source = Environment
+  role_session_name = tlz-pipeline
+  region = <region>
+  ```
+
+The session of a role assumed from another role is capped at one hour by AWS; the SDK renews it on its own, and no `duration` is set anywhere in this landing zone. The pipeline's checkout carries `env/common.hcl` and `env/accounts.hcl` with every account id, so no account lookup runs in the container (the container has no AWS CLI).
+
 ## Usage Example
 
 ```hcl
@@ -163,6 +192,7 @@ module "pipeline" {
   repository_name       = "my-org/my-landing-zone"
   branch_name           = "main"
   source_connection_arn = "arn:aws:codeconnections:eu-central-1:123456789012:connection/11111111-2222-3333-4444-555555555555"
+  aws_profile           = "my-landing-zone"
   deployment_role_arns = {
     management = module.deployment_role.role_arn
   }

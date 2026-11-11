@@ -3,6 +3,111 @@
 This file lists what changed in the published repository, one section per version, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.30] - 2026-11-11
+
+### Added
+
+- Module `security-org-config` runs the finding consumers in the Audit account: the GuardDuty
+  findings export, the Macie classification export, the Security Hub finding aggregator, the
+  automation rules and the disabled controls of the delegated administrator, and it enrols the
+  existing accounts as Security Hub members. Only there do export, rules and aggregation reach every
+  member account's findings.
+- The central log bucket and its key admit the GuardDuty and Macie exports of the Audit account
+  (`finding_export_source_account_ids`, set by the logging stack once the Audit account resolves).
+- Stack `stacks/audit/monitoring`: the GuardDuty and Security Hub EventBridge rules, the SNS topics
+  and the findings dashboard in the Audit account; `audit_sns_email_targets` and `audit_sns_topics`
+  set its targets, and the management lists apply when they are absent.
+- Quarantine at OU level: `quarantine_ou_name` names a declared OU the quarantine SCP is attached to,
+  and the output `quarantine_ou_id` hands its id on. The example declares the OU `Quarantine`.
+- `accounts[].quarantined = true` creates a new account inside the quarantine OU, under the
+  quarantine SCP from its first second, while its declared OU stays its deployment scope;
+  `quarantined = false` moves it there. The plan names the quarantined accounts and warns when the
+  access role is one the SCP does not exempt.
+- Module `workload-networking` and stack `stacks/workload-dev/networking`: the security groups,
+  target groups and internal load balancers a workload account must own itself, in the VPCs the
+  management account shares with it (`workload_security_groups`, `workload_target_groups`,
+  `workload_load_balancers`); `workload-compute` takes them from there, and both follow
+  `enable_workload_compute`. The workload compute module refuses at plan a target group of another
+  account, which AWS refused at apply before.
+- `docs/getting-started.md` gains the section "Deployment account mode" with the order of the first
+  apply and the destroy order per mode; `docs/architecture.md` gains "Credential chain": the four
+  identities and which one each unit's provider and state backend use, for an operator and for the
+  pipeline. `env/common.hcl.example` explains the switch and the profile the pipeline writes.
+
+### Changed
+
+- The finding consumers move to the Audit account: with `security_finding_consumers_in_audit`
+  (`env/common.hcl`, default true) and an Audit account, the next apply destroys the GuardDuty
+  export, the Macie export, the Security Hub aggregator and the automation rules in the management
+  account and creates them in the Audit account. Set the key to false before upgrading to keep
+  today's layout.
+- Upgrade: during that apply the management account's own findings are unexported for the minutes
+  between destroy and create; findings already exported stay in the bucket. Every address in
+  `sns_email_targets` receives a second subscription confirmation from the Audit account's topics
+  unless `audit_sns_email_targets` names other addresses. `docs/operations.md` describes the move,
+  the migration and the rollback.
+- The pipeline module takes the new required input `aws_profile` and requires the key `management`
+  in `deployment_role_arns`; a caller outside the stacks must set both.
+- Giving an existing security group rule or route a `name` changes its key, so the first plan after
+  that replaces the entry once.
+- With `enable_security = false`, the first plan removes Macie trusted access from the organization.
+
+### Fixed
+
+- The deployment account mode reaches its state and its roles: with `enable_deployment_account = true`
+  every unit runs as `aws_profile` and its state backend assumes the deployment account's access role
+  in the `assume_role` block Terraform accepts; the deployment-role unit no longer assumes the role it
+  creates, the pipeline unit runs in the deployment account, and a bootstrap unit called under the
+  wrong mode is refused.
+- The pipeline has the profile its stacks name: the build steps of the CodePipeline variant and the
+  command of the ECS variant write an `aws_profile` entry into the container that assumes the
+  management deployment role before Terragrunt starts.
+- `env/common.hcl.example` plans the organization unit: it ships `service_access_principals = []`
+  with the delegated administrators as a commented example, and the VPC Block Public Access policy
+  targets the Security, Infrastructure and Workloads OUs instead of account names.
+- The accounts unit plans before the first apply: its first plan gets a placeholder id for every
+  declared OU, and its deployment-account provider uses `aws_profile`. An account placed by an OU
+  path (`Workloads/Dev`) or by OU id alone no longer stops `terragrunt run --all` while the
+  configuration is parsed.
+- The first `run --all -- apply` skips units whose dependency is switched off: the config recorders
+  follow `enable_logging`, `audit/security-org-config` and Macie trusted access follow
+  `enable_security`, and `management/cur` no longer reads the logging stack; before, these failed
+  with "detected no outputs". `docs/operations.md` explains switching off.
+- Networking no longer waits for the Config rules: in `terragrunt run --all`, networking, iam and the
+  units after them start two levels earlier. Nothing in a deployed organization changes.
+- The `Error creating` retry in `stacks/root.hcl` is removed; it matched no AWS provider error.
+- The quick start and the guide set `TG_PROVIDER_CACHE=1`: one provider download per run.
+- `End-User-Policy` lets a bounded role change role policies only on roles with the same boundary,
+  and its role-creation deny accepts the boundary. Roles of `member-roles` reach accounts in nested
+  OUs.
+- SCP auto-revert undoes a detach only for policies the module manages, never for the quarantine
+  SCP; `scp_revert_exempt_principal_arns` exempts your own role.
+- SCPs may hold 10,240 characters, the AWS limit. The account-move function, which only logs events,
+  no longer holds `organizations:MoveAccount`.
+- Logging: the central bucket no longer logs into itself, which delivered nothing; the separate
+  access logs bucket uses SSE-S3; the log bucket key admits the Macie export and CloudTrail Lake
+  event data stores; the ELB log bucket admits load balancers of the organization only; an
+  auto-created replica gets Object Lock when the central bucket has it. All of these change in
+  place, nothing is replaced.
+- Networking: zone-scoped resolver rules take effect, each rule associated with the zone's VPCs;
+  private subnets use the NAT gateway in their own zone; a second DNS firewall rule group on a VPC
+  gets its own priority.
+- Networking: IPAM-fed VPCs plan and apply; interface endpoint groups and peering routes read the
+  allocated CIDR, and VPCs, subnets and IPv6 ranges wait for the pool's CIDR.
+- Networking: an application load balancer without a security group and a Transit Gateway attachment
+  without a subnet are refused at plan; the README usage example plans.
+- Networking: an optional `name` on security group rules and routes keys them by name, so removing an
+  earlier entry no longer replaces the later ones.
+- `ignore = true` on an OU takes effect and covers every OU below it: an account declared there is
+  created and kept but leaves `active_account_ids` and `active_account_ou_ids`, joins no
+  `ou_deployments` membership, and its per-account units (`stacks/<account>/*`) are skipped without
+  an account lookup, so no unit assumes a role the deny-all policy would refuse. The plan names such
+  accounts as `suspended_account_names`; `docs/operations.md` describes how to move an account to
+  `Suspended` and what to destroy first.
+- The guide creates the AWS Config service-linked role before the recorders, and the
+  management-account layout of the finding consumers is documented as seeing the management
+  account's findings only.
+
 ## [0.5.29] - 2026-11-10
 
 ### Added

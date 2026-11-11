@@ -9,7 +9,7 @@ Creates an AWS Cost and Usage Report with optional dedicated S3 bucket and KMS e
 | `enable_cost_and_usage_report` | Enable AWS Cost and Usage Report | `bool` | `false` | no |
 | `cur_config` | Cost and Usage Report configuration | `object` | `{}` | no |
 | `cur_bucket_lifecycle_rules` | Full lifecycle rule set of the dedicated CUR bucket. `null` keeps the single derived rule | `list(object)` | `null` | no |
-| `s3_bucket_name` | Name of the S3 bucket for CUR report storage | `string` | — | yes |
+| `s3_bucket_name` | Name of the S3 bucket for CUR report storage; may be empty with the dedicated bucket (`enable_dedicated_bucket = true`) | `string` | — | yes |
 | `s3_bucket_region` | Region of the S3 bucket for CUR report storage. The dedicated bucket falls back to the provider region — its real location by construction | `string` | `""` | with an external bucket (`enable_dedicated_bucket = false`) |
 | `enable_dedicated_bucket` | Create a dedicated S3 bucket for CUR reports instead of using the central log bucket | `bool` | `false` | no |
 | `kms_key_administrators` | ARNs for KMS key administration on the dedicated CUR bucket | `list(string)` | `[]` | no |

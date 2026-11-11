@@ -268,8 +268,8 @@ run "logging_default_config" {
   }
 
   assert {
-    condition     = aws_s3_bucket_logging.central_logs.target_prefix == "s3-access-logs/"
-    error_message = "Access logs of the central bucket must be written to the s3-access-logs/ prefix."
+    condition     = length(aws_s3_bucket_logging.central_logs) == 0
+    error_message = "Without the separate access logs bucket the central bucket must not log into itself."
   }
 
   assert {
@@ -394,6 +394,281 @@ run "regression_elb_log_bucket_uses_sse_s3" {
   assert {
     condition     = one(one(aws_s3_bucket_server_side_encryption_configuration.elb_logs[0].rule).apply_server_side_encryption_by_default).sse_algorithm == "AES256"
     error_message = "The ELB log bucket must be encrypted with SSE-S3 (AES256): ALB access logs refuse an SSE-KMS bucket."
+  }
+}
+
+# Without a source condition any AWS account's load balancer that names the
+# bucket could deliver into it.
+run "regression_elb_log_bucket_admits_this_organization_only" {
+  command = plan
+
+  # Without the ARN of the bucket the policy document is unknown in a plan.
+  override_resource {
+    target          = aws_s3_bucket.elb_logs
+    override_during = plan
+    values = {
+      arn = "arn:aws:s3:::tlz-elb-logs-111111111111-eu-central-1"
+    }
+  }
+
+  variables {
+    enable_elb_log_bucket = true
+  }
+
+  assert {
+    condition = anytrue([
+      for s in local.elb_log_bucket_base_policy.Statement :
+      s.Sid == "AllowELBLogDelivery" && try(s.Condition.StringEquals["aws:SourceOrgID"], "") == "o-abcd1234567"
+    ])
+    error_message = "The ELB log bucket must admit load balancers of this organization only (aws:SourceOrgID)."
+  }
+}
+
+# -----------------------------------------------------------------------------
+# 2e. Server access logs of the central bucket can be delivered
+# -----------------------------------------------------------------------------
+# S3 server access logging supports only SSE-S3 on the target bucket, and a
+# bucket cannot usefully log into itself (no grant, SSE-KMS, a log loop). The
+# central bucket logs into the separate bucket or not at all.
+run "regression_access_logs_bucket_is_sse_s3" {
+  command = plan
+
+  override_resource {
+    target          = aws_s3_bucket.central_logs
+    override_during = plan
+    values = {
+      id = "tlz-central-logs-210987654321-eu-central-1"
+    }
+  }
+  override_resource {
+    target          = aws_s3_bucket.access_logs
+    override_during = plan
+    values = {
+      id = "tlz-access-logs-210987654321-eu-central-1"
+    }
+  }
+
+  variables {
+    enable_separate_access_logs_bucket = true
+  }
+
+  assert {
+    condition     = one(one(aws_s3_bucket_server_side_encryption_configuration.access_logs[0].rule).apply_server_side_encryption_by_default).sse_algorithm == "AES256"
+    error_message = "The access logs bucket must be encrypted with SSE-S3 (AES256): S3 server access logging does not support an SSE-KMS target."
+  }
+
+  assert {
+    condition     = aws_s3_bucket_logging.central_logs[0].target_bucket == aws_s3_bucket.access_logs[0].id && aws_s3_bucket_logging.central_logs[0].target_bucket != aws_s3_bucket.central_logs.id
+    error_message = "The central bucket must log into the separate access logs bucket, never into itself."
+  }
+
+  assert {
+    condition     = aws_s3_bucket_logging.central_logs[0].target_prefix == "s3-access-logs/"
+    error_message = "Access logs of the central bucket must be written to the s3-access-logs/ prefix."
+  }
+}
+
+# -----------------------------------------------------------------------------
+# 2f. The log bucket key admits the opt-in writers that use it
+# -----------------------------------------------------------------------------
+# The Macie export and the CloudTrail Lake event data store name the log
+# bucket key. Neither matches a trail statement, so each needs its own.
+run "regression_macie_export_is_granted_on_the_log_bucket_key" {
+  command = plan
+
+  assert {
+    condition = anytrue([
+      for s in local.log_bucket_kms_policy.Statement :
+      s.Sid == "AllowMacieEncrypt"
+      && s.Principal.Service == "macie.amazonaws.com"
+      && contains(s.Action, "kms:GenerateDataKey")
+      && contains(s.Action, "kms:Encrypt")
+      && s.Condition.StringEquals["aws:SourceAccount"] == "111111111111"
+    ])
+    error_message = "The log bucket key must let Macie encrypt the exported results of this account."
+  }
+}
+
+run "regression_event_data_store_is_granted_on_the_log_bucket_key" {
+  command = plan
+
+  assert {
+    condition = anytrue([
+      for s in local.log_bucket_kms_policy.Statement :
+      s.Sid == "AllowCloudTrailEncryptEventDataStore"
+      && s.Principal.Service == "cloudtrail.amazonaws.com"
+      && contains(s.Action, "kms:GenerateDataKey")
+      && contains(s.Action, "kms:Decrypt")
+      && s.Condition.StringEquals["aws:SourceAccount"] == "111111111111"
+      && s.Condition.ArnLike["aws:SourceArn"] == "arn:aws:cloudtrail:eu-central-1:111111111111:eventdatastore/*"
+    ])
+    error_message = "The log bucket key must let CloudTrail encrypt the event data stores of this account."
+  }
+}
+
+# -----------------------------------------------------------------------------
+# 2f'. The finding export grants admit the account that owns the consumers
+# -----------------------------------------------------------------------------
+# GuardDuty and Macie write their exports from the account that owns the
+# publishing destination and the classification export. Without a further
+# source account the grants name the deploying account alone, as a plain
+# string — the rendered documents of an existing deployment stay byte-identical.
+run "regression_export_grants_default_single_account" {
+  command = plan
+
+  override_resource {
+    target          = aws_s3_bucket.central_logs
+    override_during = plan
+    values = {
+      arn = "arn:aws:s3:::tlz-central-logs-210987654321-eu-central-1"
+    }
+  }
+
+  assert {
+    condition = alltrue([
+      for sid in ["AWSGuardDutyPutObject", "AWSMacieGetBucketLocation", "AWSMaciePutObject"] :
+      [for s in local.central_log_bucket_base_policy.Statement : s if try(s.Sid, "") == sid][0].Condition.StringEquals["aws:SourceAccount"] == "111111111111"
+    ])
+    error_message = "Without finding_export_source_account_ids the GuardDuty and Macie grants of the central bucket must name the deploying account as a plain string."
+  }
+
+  assert {
+    condition = anytrue([
+      for s in local.log_bucket_kms_policy.Statement :
+      s.Sid == "AllowMacieEncrypt"
+      && s.Condition.StringEquals["aws:SourceAccount"] == "111111111111"
+      && sort(s.Condition.ArnLike["aws:SourceArn"]) == tolist([
+        "arn:aws:macie2:*:111111111111:classification-job/*",
+        "arn:aws:macie2:*:111111111111:export-configuration:*",
+      ])
+    ])
+    error_message = "Without finding_export_source_account_ids the Macie key statement must name the deploying account as a plain string and its two Macie source ARNs."
+  }
+}
+
+# The account that holds the publishing destination and the classification
+# export (the Audit account, when the finding consumers run there) joins the
+# deploying account in every export grant: the three bucket statements and the
+# Macie key statement, with both Macie source ARN forms per account.
+run "export_grants_admit_the_audit_account" {
+  command = plan
+
+  override_resource {
+    target          = aws_s3_bucket.central_logs
+    override_during = plan
+    values = {
+      arn = "arn:aws:s3:::tlz-central-logs-210987654321-eu-central-1"
+    }
+  }
+
+  variables {
+    # The deploying account listed again is folded, not duplicated.
+    finding_export_source_account_ids = ["333333333333", "111111111111"]
+  }
+
+  assert {
+    condition = alltrue([
+      for sid in ["AWSGuardDutyPutObject", "AWSMacieGetBucketLocation", "AWSMaciePutObject"] :
+      sort([for s in local.central_log_bucket_base_policy.Statement : s if try(s.Sid, "") == sid][0].Condition.StringEquals["aws:SourceAccount"]) == tolist(["111111111111", "333333333333"])
+    ])
+    error_message = "The GuardDuty and Macie grants of the central bucket must admit the deploying account and every finding_export_source_account_ids entry."
+  }
+
+  assert {
+    condition = anytrue([
+      for s in local.log_bucket_kms_policy.Statement :
+      s.Sid == "AllowMacieEncrypt"
+      && sort(s.Condition.StringEquals["aws:SourceAccount"]) == tolist(["111111111111", "333333333333"])
+      && sort(s.Condition.ArnLike["aws:SourceArn"]) == tolist([
+        "arn:aws:macie2:*:111111111111:classification-job/*",
+        "arn:aws:macie2:*:111111111111:export-configuration:*",
+        "arn:aws:macie2:*:333333333333:classification-job/*",
+        "arn:aws:macie2:*:333333333333:export-configuration:*",
+      ])
+    ])
+    error_message = "The Macie key statement must admit both accounts and carry the export-configuration and classification-job source ARNs of each."
+  }
+
+  assert {
+    condition     = length(local.export_source_accounts) == 2
+    error_message = "The export source account list must hold each account once."
+  }
+}
+
+run "export_source_account_invalid_rejected" {
+  command = plan
+
+  variables {
+    finding_export_source_account_ids = ["33333333333"]
+  }
+
+  expect_failures = [var.finding_export_source_account_ids]
+}
+
+# -----------------------------------------------------------------------------
+# 2g. A locked central bucket replicates into a locked replica
+# -----------------------------------------------------------------------------
+# With Object Lock on the source, S3 replicates only into a destination with
+# Object Lock, and the replication role must read retention and legal hold.
+run "regression_replica_bucket_carries_object_lock" {
+  command = plan
+
+  override_resource {
+    target          = aws_s3_bucket.central_logs
+    override_during = plan
+    values = {
+      arn = "arn:aws:s3:::tlz-central-logs-210987654321-eu-central-1"
+    }
+  }
+  override_resource {
+    target          = aws_kms_key.log_bucket
+    override_during = plan
+    values = {
+      arn = "arn:aws:kms:eu-central-1:111111111111:key/00000000-0000-0000-0000-000000000000"
+    }
+  }
+  override_resource {
+    target          = aws_kms_key.replication_dest
+    override_during = plan
+    values = {
+      arn = "arn:aws:kms:eu-west-1:111111111111:key/11111111-1111-1111-1111-111111111111"
+    }
+  }
+
+  variables {
+    enable_s3_object_lock = true
+    force_destroy         = true
+    s3_replication_config = {
+      destination_region = "eu-west-1"
+    }
+  }
+
+  assert {
+    condition     = length(aws_s3_bucket_object_lock_configuration.replication_dest) == 1 && aws_s3_bucket_object_lock_configuration.replication_dest[0].object_lock_enabled == "Enabled" && aws_s3_bucket_object_lock_configuration.replication_dest[0].region == "eu-west-1"
+    error_message = "With Object Lock on the central bucket the auto-created replica must have Object Lock enabled, in the destination region."
+  }
+
+  assert {
+    condition = anytrue([
+      for s in jsondecode(aws_iam_role_policy.replication[0].policy).Statement :
+      s.Sid == "AllowSourceObjectReplication" && contains(s.Action, "s3:GetObjectRetention") && contains(s.Action, "s3:GetObjectLegalHold")
+    ])
+    error_message = "The replication role must read the retention and legal hold of the source objects."
+  }
+}
+
+run "regression_replica_without_object_lock_keeps_its_plan" {
+  command = plan
+
+  variables {
+    s3_replication_config = {
+      destination_region = "eu-west-1"
+    }
+  }
+
+  assert {
+    condition     = length(aws_s3_bucket_object_lock_configuration.replication_dest) == 0
+    error_message = "Without Object Lock on the central bucket the replica must not get an Object Lock configuration."
   }
 }
 

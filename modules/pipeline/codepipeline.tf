@@ -344,6 +344,10 @@ resource "aws_codebuild_project" "plan" {
     # with account-provisioning reach. Same precedent as .gitlab-ci.yml's
     # Terraform install (version variable + SHA256SUMS, checksum verified
     # before use).
+    # The build step first writes the profile Terragrunt's generated files
+    # name (local.pipeline_profile_command, main.tf): it assumes the
+    # management deployment role with the build's own role, so the stacks
+    # run as they do for an operator with a named profile.
     buildspec = <<-YAML
       version: 0.2
       phases:
@@ -356,6 +360,7 @@ resource "aws_codebuild_project" "plan" {
             - chmod +x /usr/local/bin/terragrunt
         build:
           commands:
+            - ${local.pipeline_profile_command}
             - terragrunt run --all -- plan -out=tfplan
       artifacts:
         files:
@@ -395,7 +400,8 @@ resource "aws_codebuild_project" "apply" {
     type = "CODEPIPELINE"
     # Same pin and verification as the plan project's buildspec above — this
     # stage's role carries the same AssumeDeploymentRoles grant and runs the
-    # apply.
+    # apply. The same profile is written first: the apply stage is a new
+    # container.
     buildspec = <<-YAML
       version: 0.2
       phases:
@@ -408,6 +414,7 @@ resource "aws_codebuild_project" "apply" {
             - chmod +x /usr/local/bin/terragrunt
         build:
           commands:
+            - ${local.pipeline_profile_command}
             - terragrunt run --all -- apply tfplan
       artifacts:
         files:

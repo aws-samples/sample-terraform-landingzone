@@ -11,7 +11,8 @@
       "Resource": "${bucket_arn}/*",
       "Condition": {
         "StringEquals": {
-          "s3:x-amz-acl": "bucket-owner-full-control"
+          "s3:x-amz-acl": "bucket-owner-full-control",
+          "aws:SourceOrgID": "${organization_id}"
         }
       }
     },

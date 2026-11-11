@@ -20,6 +20,17 @@ Before the FIRST org-wide apply against accounts that an earlier deployment alre
 
 Toggle in `env/common.hcl`, then apply. Disabled modules are skipped. Dependent modules are also skipped.
 
+### Switching a module off
+
+A switched-off module is skipped by every `run --all` command, `destroy` included: its resources stay in AWS and are no longer managed. The units that read its outputs are skipped with it, for example the config recorders while `enable_logging` is false and `audit/security-org-config` while `enable_security` is false. To remove the resources, destroy each unit directly while its toggle is still on, dependents first, then set the toggle to false:
+
+```bash
+(cd stacks/audit/security-org-config && terragrunt destroy)
+(cd stacks/management/security && terragrunt destroy)
+```
+
+A direct `terragrunt destroy` in a unit also works after the toggle is off. For an account of an `ou_deployments` entry, remove the account from the entry and apply once before deleting the entry.
+
 ## Adding Accounts
 
 Add to `accounts` list in `env/common.hcl`. Apply the accounts stack. Account IDs propagate via dependency outputs. Create a config-recorder stack for the new account.
@@ -57,9 +68,46 @@ TLZ supports a warm/promote pattern for account onboarding, using Terragrunt per
    terragrunt output warm_account_ids
    ```
 
+## Suspending an Account
+
+The example configuration declares a `Suspended` OU with `ignore = true` and attaches the deny-all `suspended-guardrails` policy to it. An account declared in that OU (or in an OU below it) is **suspended**: it stays declared and managed by the accounts unit and keeps its ID in `account_ids`, but it leaves `active_account_ids` and `active_account_ou_ids`, joins no `ou_deployments` membership, and its per-account units (`stacks/<account>/*`) resolve no account ID and are skipped. No unit assumes a role in the account, which the deny-all policy would refuse anyway. The accounts unit names every suspended account on each plan (`suspended_account_names`).
+
+The policy denies every action inside the account, including the destroy of the resources the landing zone put there. Remove them **before** the move:
+
+1. **While the account is still in its working OU**, destroy what the organization-wide units hold in it, then its per-account units (`<id>` is the 12-digit account ID):
+   ```bash
+   (cd stacks/management/member-roles && terragrunt destroy -target='module.acct_<id>')
+   (cd stacks/management/config-recorder-members && terragrunt destroy \
+     -target='aws_config_configuration_recorder_status.acct_<id>' \
+     -target='aws_config_delivery_channel.acct_<id>' \
+     -target='aws_config_configuration_recorder.acct_<id>')
+   # each ou-deployment unit whose entry resolves the account:
+   (cd stacks/management/ou-deployment/ssm-parameters && terragrunt destroy -target='module.ssm_parameters_<id>')
+   (cd stacks/management/ou-deployment/service-quotas && terragrunt destroy -target='module.service_quotas_<id>')
+   (cd stacks/management/ou-deployment/backup-vaults && terragrunt destroy -target='module.backup_<id>')
+   (cd stacks/management/ou-deployment/event-bus-policy && terragrunt destroy -target='aws_cloudwatch_event_bus_policy.acct_<id>')
+   # the account's own units, for example:
+   (cd stacks/workload-dev/workload-compute && terragrunt destroy)
+   (cd stacks/workload-dev/config-recorder && terragrunt destroy)
+   ```
+2. **Move the account** — set `organizational_unit_name = "Suspended"` on its entry in `env/common.hcl` and apply the accounts unit. The move is in place (`MoveAccount`); the deny-all policy applies at once:
+   ```bash
+   (cd stacks/management/accounts && terragrunt apply)
+   ```
+3. **Check** — `cd stacks && terragrunt run --all -- plan` shows the account in no unit any more. Units that read the accounts unit's outputs (security, config rules, IAM, networking shares, backup, customizations) drop the account from their inputs and update in place.
+4. **Close the account** later, as described under [Destroy](getting-started.md#destroy) in the getting-started guide.
+
+If step 1 was skipped, every unit that generated a provider for the account (member-roles, config-recorder-members, the ou-deployment units) fails with Terraform's `Provider configuration not present ... has been removed` for the account's resources. Remove them from the state; they stay in the suspended account, unreachable, and go with its closure:
+
+```bash
+(cd stacks/management/member-roles && terragrunt state rm 'module.acct_<id>')
+```
+
+To bring an account back, declare it in a working OU again and apply the accounts unit; the next organization-wide apply configures it like a new account.
+
 ## Pipeline Mode Bootstrap
 
-Phase 1: Create accounts + state backend. Phase 2: Deploy pipeline. Phase 3: Push to main — pipeline takes over. After that, local execution is only for bootstrap and emergencies.
+The pipeline runs the stacks as an operator does: its build writes a profile of the configured `aws_profile` name into the container before Terragrunt starts, and that profile assumes `TLZDeploymentRole` in the management account with the container's own role. The repository the pipeline builds carries `env/common.hcl` and `env/accounts.hcl` with every account id, so no account lookup runs in the container. The order of the first apply — deployment account, deployment bootstrap, organization-wide apply, then the pipeline — is in [Getting Started — Deployment account mode](getting-started.md#deployment-account-mode); the identities and hops are in [Architecture — Credential chain](architecture.md#credential-chain). After the first successful pipeline run, local execution is only for bootstrap and emergencies.
 
 ## State Management
 
@@ -424,7 +472,7 @@ All logs are stored in the central S3 bucket. The bucket is created by `stacks/m
 | `cloudtrail/` | Organization CloudTrail events (management + data events) | CloudTrail org trail |
 | `config/` | AWS Config snapshots and history | Config Delivery Channel |
 | `cloudwatch-logs/` | CloudWatch logs replicated via Kinesis/Firehose | CloudWatch Log subscriptions |
-| `s3-access-logs/` | S3 server access logs for the central bucket itself | S3 access logging |
+| `s3-access-logs/` | Not written. With `enable_separate_access_logs_bucket = true` the S3 server access logs of the central bucket go to this prefix in the separate access logs bucket; otherwise object access to the central bucket is recorded by the S3 data events of the organization trail (`cloudtrail_s3_data_events`, on by default) | S3 access logging |
 | `guardduty/` | GuardDuty findings export | GuardDuty S3 publishing |
 | `cur/` | Cost and Usage Reports | AWS CUR |
 | `elb-logs/` | ELB access logs (separate bucket) | ELB access logging |
@@ -598,6 +646,25 @@ terraform state mv \
 ```
 
 To derive the mapping for any configuration: list the enabled standards, sort their ARN suffixes lexicographically, and map each old index to its suffix. `terraform plan` verifies the result — a correct migration shows no destroy/create of a standards subscription.
+
+## Moving the finding consumers to the Audit account
+
+The GuardDuty findings export, the Macie classification export, the Security Hub finding aggregator and the automation rules reach the member accounts' findings only in the delegated administrator, the Audit account. With `security_finding_consumers_in_audit` (`env/common.hcl`, default true when the key is absent) and an Audit account, the next `terragrunt run --all -- apply` moves them there:
+
+- `management/logging`: in-place updates of the central bucket policy (the GuardDuty and Macie grants gain the Audit account) and of the bucket key policy (the Macie statement). No replacement.
+- `management/security`: destroys `aws_guardduty_publishing_destination.this[0]`, `time_sleep.guardduty_export_wait[0]`, `aws_securityhub_finding_aggregator.this[0]`, every `aws_securityhub_automation_rule.this[...]` and, where it existed, `aws_macie2_classification_export_configuration.this[0]`. Nothing else changes: detector, Security Hub account, standards, disabled controls and the export lifecycle rule stay.
+- `audit/security-org-config`: additions only — destination and wait, aggregator, rules, one `aws_securityhub_member` per existing account and for the management account, the disabled controls of the Audit account, the Macie export when enabled. The detector's `finding_publishing_frequency` shows no diff at the default.
+- `audit/monitoring`: additions only — SNS key and topics, subscriptions, the GuardDuty and Security Hub rules, the findings log group, the dashboard `TLZ-Audit-Findings`.
+
+The run order follows the dependencies: logging, security, security-org-config, monitoring. No `moved` block and no import: the resources change account, which no state move can express, and every destroyed object is a configuration, not data. The findings already exported stay where they are — same bucket, same prefixes `guardduty/AWSLogs/<account>/GuardDuty/<region>/...` and `macie/classification-results/` — and the Audit export continues under the same prefix; the lifecycle rules of the prefix are unchanged.
+
+Within one run the management export is destroyed minutes before the Audit export exists. That gap concerns the management account's own findings only (member findings had no export before), and the management alerting rules stay up throughout. The management account becomes a member of the Audit administrator, so its GuardDuty and Security Hub findings also reach the Audit rules: a management finding can alert twice (once per account) while both rule sets exist.
+
+Every email address in `sns_email_targets` receives a second subscription confirmation, from the Audit account's topics, unless `audit_sns_email_targets` names other addresses.
+
+To keep today's layout, set `security_finding_consumers_in_audit = false` in `env/common.hcl` **before** upgrading: no unit then plans a change (the management security unit reports the export beside a designated administrator as a warning, by design). Rollback after the move: set the key to `false` and apply — the Audit resources are destroyed and the management ones re-created in the same run; the bucket and key grants for the Audit account stay until its id leaves `finding_export_source_account_ids`, which is harmless.
+
+What only a real organization shows: that the Audit destination reaches `PUBLISHING` with the management bucket and key (probe GD-01 after the move), that every active account and the management account appear as GuardDuty and Security Hub members of the Audit administrator (probe DA-01), and that a member's Security Hub finding fires the Audit rule. `make livetest-probes` runs GD-01 and DA-01.
 
 ## Migrating to the New TLS Listener Floor
 

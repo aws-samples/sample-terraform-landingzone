@@ -496,6 +496,15 @@ locals {
     }
   }
 
+  # Workload networking (modules/workload-networking, the networking unit of
+  # the workload account): the security groups, target groups and internal
+  # load balancers the workload account owns in the shared VPCs. Read from
+  # env/common.hcl alone, no base/framework merge; the workload compute unit
+  # resolves its security_group_names and target_groups against them.
+  workload_security_groups = try(local.common.locals.workload_security_groups, [])
+  workload_target_groups   = try(local.common.locals.workload_target_groups, [])
+  workload_load_balancers  = try(local.common.locals.workload_load_balancers, [])
+
   directory_config_launch_templates = {
     for name, lt in try(local.common.locals.directory_config_launch_templates, {}) : name => {
       for attr, value in merge(lt, {

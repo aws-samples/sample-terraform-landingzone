@@ -43,7 +43,18 @@ mock_provider "aws" {
       region = "us-east-1"
     }
   }
+
+  # The Audit account: the administrator that the finding consumers run in,
+  # and the one id the member enrolment refuses.
+  override_data {
+    target = data.aws_caller_identity.current
+    values = {
+      account_id = "123456789012"
+    }
+  }
 }
+
+mock_provider "time" {}
 
 # -----------------------------------------------------------------------------
 # Scenario 1: Toggle-Off — all services disabled, no resources planned
@@ -769,5 +780,267 @@ run "eusc_detective_skip_is_reported" {
       length(aws_detective_organization_configuration.this) == 0,
     ])
     error_message = "Detective resources must be skipped in the aws-eusc partition while the check reports the skip."
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Finding consumers in the administrator account (consumers.tf)
+# -----------------------------------------------------------------------------
+# The administrator's export, aggregator, automation rules and member enrolment
+# are the consumers that reach every member's findings. Each needs its input;
+# with the defaults the module plans none of them, so a deployment that leaves
+# the consumers in the management account keeps its plan.
+run "regression_consumer_defaults_keep_the_plan" {
+  command = plan
+
+  variables {
+    enable_guardduty    = true
+    enable_security_hub = true
+    enable_macie        = true
+    enable_detective    = true
+    security_hub_standards = [
+      "aws-foundational-security-best-practices/v/1.0.0",
+    ]
+  }
+
+  assert {
+    condition = alltrue([
+      length(time_sleep.guardduty_export_wait) == 0,
+      length(aws_guardduty_publishing_destination.this) == 0,
+      length(aws_macie2_classification_export_configuration.this) == 0,
+      length(aws_securityhub_finding_aggregator.this) == 0,
+      length(aws_securityhub_automation_rule.this) == 0,
+      length(aws_securityhub_standards_control.disabled) == 0,
+      length(aws_securityhub_member.this) == 0,
+    ])
+    error_message = "With the consumer inputs at their defaults the module must plan no export, aggregator, rule, disabled control or member."
+  }
+
+  assert {
+    condition = alltrue([
+      output.guardduty_publishing_destination_arn == null,
+      output.security_hub_aggregator_arn == null,
+      length(output.security_hub_member_ids) == 0,
+    ])
+    error_message = "The consumer outputs must be empty while no consumer is planned."
+  }
+}
+
+run "consumers_reach_the_audit_resources" {
+  command = plan
+
+  variables {
+    enable_guardduty    = true
+    enable_security_hub = true
+    enable_macie        = true
+    security_hub_standards = [
+      "aws-foundational-security-best-practices/v/1.0.0",
+    ]
+
+    central_log_bucket_name               = "tlz-central-logs-210987654321-us-east-1"
+    guardduty_export_kms_key_arn          = "arn:aws:kms:us-east-1:111111111111:key/11111111-2222-3333-4444-aaaabbbbcccc"
+    guardduty_export_frequency            = "FIFTEEN_MINUTES"
+    guardduty_export_prefix               = "security/guardduty/"
+    macie_publish_sensitive_data_findings = true
+
+    enable_security_hub_region_aggregation = true
+    security_hub_aggregation_regions       = ["eu-central-1", "eu-west-1"]
+    security_hub_automation_rules = [
+      {
+        rule_name   = "suppress-informational"
+        rule_order  = 10
+        description = "Suppress informational findings"
+        criteria = {
+          severity_label = [{ comparison = "EQUALS", value = "INFORMATIONAL" }]
+        }
+        actions = {
+          finding_fields_update = {
+            workflow = { status = "SUPPRESSED" }
+          }
+        }
+      },
+      {
+        rule_name       = "not-in-this-region"
+        rule_order      = 11
+        description     = "Excluded from the test region"
+        exclude_regions = ["us-east-1"]
+        criteria = {
+          record_state = [{ comparison = "EQUALS", value = "ACTIVE" }]
+        }
+        actions = {
+          finding_fields_update = {
+            workflow = { status = "SUPPRESSED" }
+          }
+        }
+      },
+    ]
+    security_hub_disabled_controls = [
+      {
+        standard_arn_suffix = "aws-foundational-security-best-practices/v/1.0.0"
+        control_ids         = ["S3.1", "IAM.6"]
+      },
+    ]
+    security_hub_member_account_ids = ["111111111111", "444455556666"]
+  }
+
+  assert {
+    condition = alltrue([
+      length(time_sleep.guardduty_export_wait) == 1,
+      length(aws_guardduty_publishing_destination.this) == 1,
+      aws_guardduty_publishing_destination.this[0].destination_arn == "arn:aws:s3:::tlz-central-logs-210987654321-us-east-1/security/guardduty",
+      aws_guardduty_publishing_destination.this[0].kms_key_arn == "arn:aws:kms:us-east-1:111111111111:key/11111111-2222-3333-4444-aaaabbbbcccc",
+      aws_guardduty_publishing_destination.this[0].destination_type == "S3",
+    ])
+    error_message = "The GuardDuty publishing destination must point at the configured prefix of the central bucket and carry the bucket key."
+  }
+
+  assert {
+    condition     = aws_guardduty_detector.this[0].finding_publishing_frequency == "FIFTEEN_MINUTES"
+    error_message = "The administrator's detector must publish at the export frequency — it is the frequency AWS applies to the members' notifications."
+  }
+
+  assert {
+    condition = alltrue([
+      length(aws_macie2_classification_export_configuration.this) == 1,
+      aws_macie2_classification_export_configuration.this[0].s3_destination[0].bucket_name == "tlz-central-logs-210987654321-us-east-1",
+      aws_macie2_classification_export_configuration.this[0].s3_destination[0].key_prefix == "macie/classification-results/",
+      aws_macie2_classification_export_configuration.this[0].s3_destination[0].kms_key_arn == "arn:aws:kms:us-east-1:111111111111:key/11111111-2222-3333-4444-aaaabbbbcccc",
+    ])
+    error_message = "The Macie classification export must write under macie/classification-results/ of the central bucket with the bucket key."
+  }
+
+  assert {
+    condition = alltrue([
+      length(aws_securityhub_finding_aggregator.this) == 1,
+      aws_securityhub_finding_aggregator.this[0].linking_mode == "SPECIFIED_REGIONS",
+      tolist(aws_securityhub_finding_aggregator.this[0].specified_regions) == tolist(["eu-central-1", "eu-west-1"]),
+    ])
+    error_message = "The finding aggregator must link the configured regions."
+  }
+
+  assert {
+    condition = alltrue([
+      length(aws_securityhub_automation_rule.this) == 1,
+      aws_securityhub_automation_rule.this["suppress-informational"].rule_status == "ENABLED",
+    ])
+    error_message = "Automation rules must be keyed by rule_name, and a rule excluding the current region must not be created here."
+  }
+
+  assert {
+    condition = alltrue([
+      length(aws_securityhub_member.this) == 2,
+      sort(keys(aws_securityhub_member.this)) == tolist(["111111111111", "444455556666"]),
+      aws_securityhub_member.this["111111111111"].account_id == "111111111111",
+      aws_securityhub_member.this["111111111111"].invite == false,
+    ])
+    error_message = "Every listed account must be enrolled as a Security Hub member of this administrator without an invitation."
+  }
+
+  assert {
+    condition = alltrue([
+      length(aws_securityhub_standards_control.disabled) == 2,
+      aws_securityhub_standards_control.disabled["aws-foundational-security-best-practices/v/1.0.0/S3.1"].standards_control_arn == "arn:aws:securityhub:us-east-1:123456789012:control/aws-foundational-security-best-practices/v/1.0.0/S3.1",
+      aws_securityhub_standards_control.disabled["aws-foundational-security-best-practices/v/1.0.0/S3.1"].control_status == "DISABLED",
+    ])
+    error_message = "Disabled controls must name the administrator account's own controls."
+  }
+
+  assert {
+    condition     = sort(output.security_hub_member_ids) == tolist(["111111111111", "444455556666"])
+    error_message = "security_hub_member_ids must list the enrolled accounts."
+  }
+}
+
+# The export resources need the bucket key: the same cross-variable validation
+# as in modules/security refuses the combination before the plan.
+run "export_without_kms_key_rejected" {
+  command = plan
+
+  variables {
+    enable_guardduty           = true
+    central_log_bucket_name    = "tlz-central-logs-210987654321-us-east-1"
+    guardduty_export_frequency = "SIX_HOURS"
+  }
+
+  expect_failures = [var.guardduty_export_kms_key_arn]
+}
+
+run "member_id_invalid_rejected" {
+  command = plan
+
+  variables {
+    enable_security_hub             = true
+    security_hub_member_account_ids = ["11111111111"]
+  }
+
+  expect_failures = [var.security_hub_member_account_ids]
+}
+
+# The administrator cannot be its own member: CreateMembers from the Audit
+# account naming the Audit account fails at apply, the precondition stops the
+# plan.
+run "member_is_the_administrator_rejected" {
+  command = plan
+
+  variables {
+    enable_security_hub             = true
+    security_hub_member_account_ids = ["111111111111", "123456789012"]
+  }
+
+  expect_failures = [aws_securityhub_member.this]
+}
+
+# A control exists only under a subscribed standard; naming another standard
+# would pass the plan and fail at apply.
+run "disabled_control_of_unsubscribed_standard_rejected" {
+  command = plan
+
+  variables {
+    enable_security_hub = true
+    security_hub_standards = [
+      { arn_suffix = "aws-foundational-security-best-practices/v/1.0.0", enabled = true },
+      { arn_suffix = "nist-800-53/v/5.0.0", enabled = false },
+    ]
+    security_hub_disabled_controls = [
+      {
+        standard_arn_suffix = "nist-800-53/v/5.0.0"
+        control_ids         = ["IAM.6"]
+      },
+    ]
+  }
+
+  expect_failures = [var.security_hub_disabled_controls]
+}
+
+# Automation rules exist only in an administrator account and reach its
+# members; rules without a single enrolled member are a half-move the check
+# reports.
+run "rules_without_members_are_reported" {
+  command = plan
+
+  variables {
+    enable_security_hub = true
+    security_hub_automation_rules = [
+      {
+        rule_name   = "suppress-informational"
+        rule_order  = 10
+        description = "Suppress informational findings"
+        criteria = {
+          severity_label = [{ comparison = "EQUALS", value = "INFORMATIONAL" }]
+        }
+        actions = {
+          finding_fields_update = {
+            workflow = { status = "SUPPRESSED" }
+          }
+        }
+      },
+    ]
+  }
+
+  expect_failures = [check.security_hub_members_enrolled]
+
+  assert {
+    condition     = length(aws_securityhub_automation_rule.this) == 1
+    error_message = "The rule is still planned; the check only reports the missing enrolment."
   }
 }

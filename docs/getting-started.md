@@ -106,6 +106,12 @@ Leave `env/accounts.hcl` empty for now — the cross-account stacks resolve thei
 
 `stacks/management/config-rules` evaluates member accounts once the Audit account ID resolves, the same way the recorder stacks resolve it: `audit_account_id` in `env/accounts.hcl` when set, otherwise the SSM parameter `/tlz/accounts/Audit/id` that Pass 1 writes (or `enable_config_recorder_members = true`). Before the Audit account exists it excludes every member account from every organization Config rule and conformance pack. Conformance packs are organization packs: they reach the same member accounts as the rules.
 
+Turn on Terragrunt's provider cache in the shell before the first `terragrunt run --all`. Without it every unit downloads and unpacks its own copy of the AWS provider:
+
+```bash
+export TG_PROVIDER_CACHE=1   # one provider download for all units; the cache server listens on localhost only
+```
+
 ## 2. Phase 1 — Foundation (Organization + Accounts)
 
 This creates the AWS Organization, OUs, SCPs, and member accounts. Requires two passes on the first deployment:
@@ -114,15 +120,27 @@ This creates the AWS Organization, OUs, SCPs, and member accounts. Requires two 
 # Pass 1: Create Organization, OUs, policies, and accounts
 (cd stacks && terragrunt run --all -- apply)    # Creates: Org, 8 OUs, SCPs, Accounts, SSM parameters
 
-# Pass 2: Deploy cross-account stacks (config-recorder in member accounts)
+# Before Pass 2: the AWS Config recorders reference the service-linked role
+# AWSServiceRoleForConfig and no stack creates it. Create it once in every
+# account that gets a recorder (management, Audit, Log-Archive, workload
+# accounts), with a profile for that account; config.<dns_suffix> outside the
+# aws partition. "has been taken" means the role exists already. The recorders
+# follow enable_logging and come with Phase 2; the accounts exist after Pass 1.
+aws iam create-service-linked-role --aws-service-name config.amazonaws.com --profile <account-profile>
+
+# Pass 2: Deploy the cross-account stacks of the Audit account
 # These resolve account IDs from the plain-ID parameters
 # (/tlz/accounts/<AccountName>/id) written in Pass 1
-(cd stacks && terragrunt run --all -- apply)    # Deploys: config-recorder in Audit, Log-Archive, workload accounts
+(cd stacks && terragrunt run --all -- apply)    # Deploys: the account-level security baseline of the Audit account
 ```
+
+With the Phase 1 toggles, Pass 2 deploys `audit/security-config`: the password policy and the other account-level settings of the Audit account. A unit whose dependency is switched off is skipped: the config recorders in the Audit, Log-Archive and workload accounts follow `enable_logging` and come with Phase 2, and `audit/security-org-config` follows `enable_security`.
 
 After the first deployment, all subsequent changes are single-pass: `(cd stacks && terragrunt run --all -- apply)`.
 
-Account IDs flow automatically — the accounts stack writes one plain-ID parameter per account (`/tlz/accounts/<AccountName>/id`, plus a `/metadata` JSON record), and the cross-account stacks resolve the plain ID at parse time. The security stack registers delegated admin for GuardDuty, SecurityHub, Macie, and Access Analyzer automatically.
+Adding an account later: declare it in `accounts` with its final `organizational_unit_name` and `quarantined = true`, then `(cd stacks && terragrunt run --all -- apply)`. The accounts stack creates it inside the quarantine OU (`quarantine_ou_name`, `Quarantine` in the example), where the quarantine SCP already applies, and the cross-account stacks configure it through the access role the SCP exempts. The plan names the quarantined accounts on every run. Release it once configured: set `quarantined = false` and apply `stacks/management/accounts`, which moves the account to its declared OU. With `enable_quarantine_scp = false` leave the flag out; a quarantined account without a quarantine OU is refused at plan time.
+
+Account IDs flow automatically — the accounts stack writes one plain-ID parameter per account (`/tlz/accounts/<AccountName>/id`, plus a `/metadata` JSON record), and the cross-account stacks resolve the plain ID at parse time. The security stack registers delegated admin for GuardDuty, SecurityHub, Macie, and Access Analyzer automatically. Other delegated administrators (for example Firewall Manager, IPAM or Identity Center) go into `service_access_principals` in `env/common.hcl` once their account IDs exist, and each such service also needs trusted access, from a toggle or from `additional_aws_service_access_principals`.
 
 Verify cross-account access works:
 
@@ -161,7 +179,10 @@ enable_security = true
 # Security services (GuardDuty, SecurityHub, Macie, Access Analyzer)
 (cd stacks/management/security && terragrunt plan && terragrunt apply)
 
-# Delegated admin config (from Audit account)
+# Delegated admin config (from Audit account) — org configuration and, with
+# security_finding_consumers_in_audit (default true), the finding consumers:
+# GuardDuty and Macie export into the central bucket, Security Hub aggregator,
+# automation rules and member enrolment
 (cd stacks/audit/security-org-config && terragrunt plan && terragrunt apply)
 ```
 
@@ -176,6 +197,10 @@ enable_monitoring   = true
 (cd stacks/management/config-rules && terragrunt plan && terragrunt apply)
 
 (cd stacks/management/monitoring && terragrunt plan && terragrunt apply)
+
+# Alerting on the whole organization's findings (from Audit account); runs
+# with security_finding_consumers_in_audit, after audit/security-org-config
+(cd stacks/audit/monitoring && terragrunt plan && terragrunt apply)
 ```
 
 The `iam` stack belongs to Phase 5. It depends on `networking`: Managed Microsoft
@@ -283,6 +308,7 @@ Services unavailable in aws-eusc (e.g. Macie) are automatically skipped.
 |---|---|---|
 | Local state | `state_backend = "local"` | First deployment, experimentation |
 | S3 remote state | `state_backend = "s3"` | Team collaboration (set real bucket and lock table names, then apply bootstrap first — see below) |
+| Deployment account | `enable_deployment_account = true` | State bucket and pipeline in a second account — see [Deployment account mode](#deployment-account-mode) |
 | Pipeline | `enable_pipeline = true` | CI/CD (requires Deployment Account + S3) |
 
 With `state_backend = "local"`, each unit's state is written to a stable
@@ -325,6 +351,64 @@ A deployment that already holds local state does not follow these steps: it
 moves its state as described in [Operations — Switching the backend from local
 to S3](operations.md#switching-the-backend-from-local-to-s3).
 
+### Deployment account mode
+
+With `enable_deployment_account = true` the state bucket, the lock table and
+the optional key live in a second account, the deployment account, and so does
+the pipeline. Every unit then runs as your profile in the management account
+and its state backend assumes `account_access_role_name` in the deployment
+account; the pipeline later walks the same path through a profile its build
+writes (see [Architecture — Credential chain](architecture.md#credential-chain)).
+`stacks/management/bootstrap` is never applied in this mode: `run --all` skips
+it and a direct call stops with `ERROR: stacks/management/bootstrap is not the
+state backend of this deployment`. The deployment account is a precondition,
+like the management account — it is not an entry of `accounts`, so the
+per-account units do not reach it; the organization-level services do.
+
+1. The organization exists — [Phase 1](#2-phase-1-foundation-organization-accounts)
+   with the mode off, on local or S3 state as above. For a fresh organization,
+   run pass 1 of Phase 1 with the mode off and `state_backend = "local"`; the
+   state move of step 7 then applies.
+2. Create the deployment account with the role `account_access_role_name`
+   (`aws organizations create-account --role-name <account_access_role_name>`
+   or Control Tower Account Factory), place it in the Infrastructure OU, and
+   wait for `ACTIVE`.
+3. In `env/accounts.hcl`, set `management_account_id`, `deployment_account_id`
+   and every other id. In `env/common.hcl`, set `state_backend = "s3"`, real
+   `state_bucket_name` and `lock_table_name` (a NEW bucket name if a management
+   bucket exists), `enable_deployment_account = true`, `enable_pipeline = false`
+   and `pipeline_scp_infrastructure_ou_id` from the organization output.
+4. Check the hop before anything is created; on a refusal stop here:
+   ```bash
+   aws sts assume-role --role-arn arn:aws:iam::<deployment-account-id>:role/<account_access_role_name> --role-session-name probe --profile <aws_profile>
+   ```
+5. Create the bucket, the table and the key in the deployment account. The
+   unit's own state stays local, at
+   `$TLZ_STATE_DIR/deployment/bootstrap/terraform.tfstate`:
+   ```bash
+   (cd stacks/deployment/bootstrap && terragrunt apply)
+   ```
+6. New organization: `(cd stacks && terragrunt run --all -- apply)` twice, pass 1
+   and pass 2 as in the phases above. Existing deployment: step 7 first.
+7. Existing state (local or a management bucket): move it with the procedure in
+   [Operations — Migrating local state out of the repository](operations.md#migrating-local-state-out-of-the-repository),
+   the destination being `s3://<new bucket>` reached through `aws sts assume-role`
+   into the access role of step 4. Then `(cd stacks && terragrunt run --all -- plan)`
+   must show the SSM parameters `/tlz/accounts/*` moving from the management to
+   the deployment account and nothing else.
+8. Pipeline: set `enable_pipeline = true`, `pipeline_type` and the source keys,
+   then `(cd stacks && terragrunt run --all -- apply)` creates `TLZDeploymentRole`
+   in the management account and the pipeline in the deployment account. Commit
+   `env/common.hcl` and `env/accounts.hcl` to the repository the pipeline builds
+   (`git add -f` once; this repository's `.gitignore` keeps them out here) and
+   push. The first run's Plan stage is the proof that the deployment role's
+   policy suffices; approve, and the Apply stage runs.
+
+Rollback before step 7: empty the deployment bucket and set the flag off.
+After step 7: the reverse move. The former management bucket keeps its
+content until you empty and delete it by hand (its bootstrap unit refuses a
+direct call in this mode).
+
 ## Destroy
 
 By default, destroying does not close member accounts; with
@@ -357,19 +441,22 @@ member accounts (10 to 1000) per rolling 30 days. When you hit that limit,
 (cd stacks/management/networking && terragrunt destroy)
 ```
 
-On the S3 backend, leave both bootstrap units for last. Their state bucket and
-lock table hold the state of every other unit, and no unit depends on them, so
-a plain `run --all` would destroy them in its first wave. Exclude them from the
-run, then destroy them one after the other. The management bootstrap goes
-last: it was applied first, and with the deployment account off its bucket is
-the backend of every other unit. Run the deployment bootstrap line only with
-`enable_deployment_account = true`:
+On the S3 backend, leave the bootstrap unit that holds the state for last. Its
+state bucket and lock table hold the state of every other unit, and no unit
+depends on it, so a plain `run --all` would destroy it in its first wave. Which
+unit that is follows `enable_deployment_account`: off, `stacks/management/bootstrap`;
+on, `stacks/deployment/bootstrap` (the management bootstrap is never applied in
+that mode, and each unit's `exclude` keeps the other one out of the run).
+Exclude it from the run, then destroy it on its own:
 
 ```bash
-# Entire landing zone, S3 backend
-(cd stacks && terragrunt run --all --filter '!./management/bootstrap' --filter '!./deployment/bootstrap' -- destroy)
-(cd stacks/deployment/bootstrap && terragrunt destroy)
+# Entire landing zone, S3 backend, enable_deployment_account = false
+(cd stacks && terragrunt run --all --filter '!./management/bootstrap' -- destroy)
 (cd stacks/management/bootstrap && terragrunt destroy)
+
+# Entire landing zone, S3 backend, enable_deployment_account = true
+(cd stacks && terragrunt run --all --filter '!./deployment/bootstrap' -- destroy)
+(cd stacks/deployment/bootstrap && terragrunt destroy)
 ```
 
 The state bucket is versioned and has no `force_destroy`, so AWS refuses to

@@ -157,6 +157,26 @@ locals {
     ) : id => "AWSLogs/${id}/GuardDuty/"
   }
 
+  # --- Accounts whose finding exports write to the central bucket ---
+  # The deploying account owns the GuardDuty publishing destination and the
+  # Macie classification export unless the finding consumers run in the Audit
+  # account; then that account writes too. One list feeds the aws:SourceAccount
+  # conditions of the bucket policy and the bucket key policy. A single entry
+  # renders as a plain string, more than one as a JSON array, so a deployment
+  # without further source accounts keeps its documents byte-identical.
+  export_source_accounts      = distinct(concat([local.account_id], var.finding_export_source_account_ids))
+  export_source_accounts_json = length(local.export_source_accounts) == 1 ? jsonencode(local.export_source_accounts[0]) : jsonencode(local.export_source_accounts)
+
+  # Macie's KMS calls carry the export configuration or the classification job
+  # as aws:SourceArn — the key statement names both forms per account (Macie
+  # user guide, "Storing and retaining sensitive data discovery results").
+  macie_export_source_arns_json = jsonencode(flatten([
+    for id in local.export_source_accounts : [
+      "${local.arn_prefix}:macie2:*:${id}:export-configuration:*",
+      "${local.arn_prefix}:macie2:*:${id}:classification-job/*",
+    ]
+  ]))
+
   # --- KMS Policy Objects (externalized concat wrappers) ---
   #
   # The template carries TWO CloudTrail statements, and they are not a
@@ -205,11 +225,13 @@ locals {
     Version = "2012-10-17"
     Statement = concat(
       jsondecode(templatefile("${path.module}/../../configurations/policies/logging/kms-log-bucket-key-policy.json", {
-        arn_prefix    = local.arn_prefix
-        account_id    = local.account_id
-        dns_suffix    = local.dns_suffix
-        region        = local.region
-        org_trail_arn = local.org_trail_arn
+        arn_prefix                    = local.arn_prefix
+        account_id                    = local.account_id
+        dns_suffix                    = local.dns_suffix
+        region                        = local.region
+        org_trail_arn                 = local.org_trail_arn
+        export_source_accounts_json   = local.export_source_accounts_json
+        macie_export_source_arns_json = local.macie_export_source_arns_json
       })).Statement,
       length(var.kms_key_administrators) > 0 ? [
         jsondecode(templatefile("${path.module}/../../configurations/policies/logging/kms-key-administrators-statement.json", {

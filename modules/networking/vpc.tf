@@ -26,6 +26,10 @@ resource "aws_vpc" "this" {
   tags = merge(each.value.tags, {
     Name = each.key
   })
+
+  # An IPAM pool allocates only from a CIDR provisioned to it, and the pool ID
+  # alone carries no edge to that provisioning.
+  depends_on = [aws_vpc_ipam_pool_cidr.this, aws_vpc_ipam_pool_cidr.additional]
 }
 
 # =============================================================================
@@ -85,16 +89,17 @@ locals {
 
   # Peering routes: create routes in both requester and accepter VPCs
   # For each peering, we need routes in every subnet of the requester VPC
-  # pointing to the accepter VPC CIDR, and vice versa.
+  # pointing to the accepter VPC CIDR, and vice versa. The route reads the
+  # peer's CIDR from the VPC itself, so an IPAM-allocated range resolves too.
   peering_routes = merge(
     # Requester VPC subnets → accepter VPC CIDR
     merge([
       for p in var.vpc_peering : {
         for s in local.vpc_map[p.requester_vpc_name].subnets :
         "${p.name}.req.${p.requester_vpc_name}.${s.name}" => {
-          peering_name = p.name
-          subnet_key   = "${p.requester_vpc_name}.${s.name}"
-          dest_cidr    = local.vpc_map[p.accepter_vpc_name].cidr
+          peering_name  = p.name
+          subnet_key    = "${p.requester_vpc_name}.${s.name}"
+          peer_vpc_name = p.accepter_vpc_name
         }
       }
     ]...),
@@ -103,9 +108,9 @@ locals {
       for p in var.vpc_peering : {
         for s in local.vpc_map[p.accepter_vpc_name].subnets :
         "${p.name}.acc.${p.accepter_vpc_name}.${s.name}" => {
-          peering_name = p.name
-          subnet_key   = "${p.accepter_vpc_name}.${s.name}"
-          dest_cidr    = local.vpc_map[p.requester_vpc_name].cidr
+          peering_name  = p.name
+          subnet_key    = "${p.accepter_vpc_name}.${s.name}"
+          peer_vpc_name = p.requester_vpc_name
         }
       }
     ]...),
@@ -129,7 +134,7 @@ resource "aws_route" "peering" {
   for_each = local.peering_routes
 
   route_table_id            = aws_route_table.this[each.value.subnet_key].id
-  destination_cidr_block    = each.value.dest_cidr
+  destination_cidr_block    = aws_vpc.this[each.value.peer_vpc_name].cidr_block
   vpc_peering_connection_id = aws_vpc_peering_connection.this[each.value.peering_name].id
 }
 
@@ -404,6 +409,9 @@ resource "aws_vpc_ipv6_cidr_block_association" "this" {
   # IPAM-sourced range: the pool by name, and the requested prefix length.
   ipv6_ipam_pool_id   = each.value.ipam_pool_name != null ? local.ipam_pool_ids[each.value.ipam_pool_name] : null
   ipv6_netmask_length = each.value.ipam_pool_name != null ? each.value.netmask_length : null
+
+  # Same edge as on aws_vpc.this: allocate only after the pool's CIDR exists.
+  depends_on = [aws_vpc_ipam_pool_cidr.this, aws_vpc_ipam_pool_cidr.additional]
 }
 
 # --- Further IPv6 ranges of the same VPC ---
@@ -424,6 +432,8 @@ resource "aws_vpc_ipv6_cidr_block_association" "additional" {
 
   ipv6_ipam_pool_id   = each.value.ipam_pool_name != null ? local.ipam_pool_ids[each.value.ipam_pool_name] : null
   ipv6_netmask_length = each.value.ipam_pool_name != null ? each.value.netmask_length : null
+
+  depends_on = [aws_vpc_ipam_pool_cidr.this, aws_vpc_ipam_pool_cidr.additional]
 }
 
 # --- Egress-Only Internet Gateways (one per IPv6-enabled VPC with private/isolated subnets) ---

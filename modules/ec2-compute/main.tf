@@ -16,6 +16,10 @@
 
 data "aws_partition" "current" {}
 
+# The account the module runs in: an auto-scaling group can only be attached to
+# a target group of that same account (see the traffic source attachment).
+data "aws_caller_identity" "current" {}
+
 locals {
   partition = data.aws_partition.current.partition
 
@@ -268,6 +272,13 @@ resource "aws_autoscaling_traffic_source_attachment" "this" {
     precondition {
       condition     = contains(keys(var.target_group_arns), each.value.target_group)
       error_message = "Auto-scaling group ${each.value.asg_key}: target group ${each.value.target_group} is not a key of target_group_arns — the networking stack supplies that map."
+    }
+    # AWS attaches an auto-scaling group only to a target group of the same
+    # account; a management-owned target group fails at apply. The ARN's fifth
+    # field is the owning account, compared against the caller.
+    precondition {
+      condition     = try(split(":", lookup(var.target_group_arns, each.value.target_group, "::::"))[4], "") == data.aws_caller_identity.current.account_id
+      error_message = "Auto-scaling group ${each.value.asg_key}: target group ${each.value.target_group} belongs to account ${try(split(":", lookup(var.target_group_arns, each.value.target_group, "::::"))[4], "?")}, not to this account (${data.aws_caller_identity.current.account_id}). An auto-scaling group can only be attached to a target group of its own account: declare the target group in this account (workload compute: workload_target_groups, stacks/workload-dev/networking) and name it there."
     }
   }
 }

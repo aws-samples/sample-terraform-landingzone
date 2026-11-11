@@ -21,17 +21,18 @@ Manages Organizational Units (OUs), Service Control Policies (SCPs), Tag Policie
 | `enable_quarantine_scp` | Attach an SCP that denies every action in a new account to every principal except the roles `AWSControlTowerExecution`, `TLZDeploymentRole`, `tlz-*` and `OrganizationAccountAccessRole`. Those roles keep every action, not only `sts:AssumeRole` | `bool` | `false` | no |
 | `quarantine_scp_content` | Policy document of the quarantine SCP. Empty uses the built-in document (`tlz-quarantine-guardrails.json`, with the exemptions named on `enable_quarantine_scp`) | `string` | `""` | no |
 | `quarantine_scp_targets` | OU names or account IDs the quarantine SCP is attached to | `list(string)` | `[]` | no |
+| `quarantine_ou_name` | Name of a declared OU the quarantine SCP is attached to, in addition to `quarantine_scp_targets`. The accounts module creates an account marked `quarantined = true` inside this OU, so the account carries the SCP from the moment it exists; see [Quarantine release](#quarantine-release). Empty attaches the SCP to `quarantine_scp_targets` only. Requires `enable_quarantine_scp` | `string` | `""` | no |
 | `resource_control_policies` | Resource control policies with their target OUs and accounts. `strategy` selects between `deny-list` (the default) and `allow-list` — see [Policy Strategy](#policy-strategy) | `list(object)` | `[]` | no |
 | `unresolved_resource_control_policies` | Names of resource control policies the caller left out because their document still carries an unresolved `@@marker@@`. None of them is created; a non-empty list makes the check `rcp_documents_unresolved` warn on plan and apply | `list(string)` | `[]` | no |
 | `declarative_policies` | Declarative EC2 policies with their target OUs and accounts | `list(object)` | `[]` | no |
 | `chatbot_policies` | Chatbot policies with their target OUs and accounts | `list(object)` | `[]` | no |
 | `additional_enabled_policy_types` | Policy types to keep enabled in addition to the ones the policy lists above derive, for example `AISERVICES_OPT_OUT_POLICY`. The organization resource owns the complete list of enabled policy types, so a type an adopted organization has enabled and nothing here names is disabled on apply (read today's types with `aws organizations list-roots`) | `list(string)` | `[]` | no |
 | `opt_in_regions` | Opt-in regions to enable organization-wide, for example `eu-south-1`. An empty list leaves region opt-in untouched | `list(string)` | `[]` | no |
-| `enable_quarantine_auto_detach` | Notify `scp_revert_notification_emails` when a named pipeline succeeds, so an operator releases the quarantine SCP from the accounts that run configured. The release is manual; nothing detaches the SCP automatically, see [Quarantine release](#quarantine-release). Requires `enable_quarantine_scp` | `bool` | `false` | no |
+| `enable_quarantine_auto_detach` | Notify `scp_revert_notification_emails` when a named pipeline succeeds, so an operator releases the accounts that run configured from the quarantine OU. The release is manual; nothing moves an account or detaches the SCP automatically, see [Quarantine release](#quarantine-release). Requires `enable_quarantine_scp` | `bool` | `false` | no |
 | `quarantine_detach_pipeline_names` | CodePipeline names whose `SUCCEEDED` state triggers the quarantine release notification; the rule matches no other pipeline. The rule sees pipelines of this account and region only | `list(string)` | `["tlz-deployment-pipeline"]` | no |
 | `quarantine_detach_topic_name` | Name of the quarantine-SCP detach notification topic (created with `enable_quarantine_auto_detach`). Same contract as `scp_revert_topic_name` (`CreateTopic` is an upsert; the default is the module's standard name, dormant while the toggle is off); must stay inside `tlz-` — see [Upsert-safe resource names](#upsert-safe-resource-names) | `string` | `"tlz-quarantine-scp-detach-notification"` | no |
 | `quarantine_detach_rule_name` | Name of the EventBridge rule that detects pipeline completion for the quarantine detach. Same contract as `scp_revert_rule_name` (`PutRule` is an upsert); must stay inside `tlz-` | `string` | `"tlz-quarantine-scp-pipeline-completion"` | no |
-| `enable_account_move_automation` | Move accounts between OUs in response to Organizations API events. The rule, the function and its log group are created in `us-east-1`, where Organizations delivers its events, whatever region the stack runs in | `bool` | `false` | no |
+| `enable_account_move_automation` | Log Organizations `CreateAccount` and `MoveAccount` events to a Lambda function's log group; the function moves no account. The rule, the function and its log group are created in `us-east-1`, where Organizations delivers its events, whatever region the stack runs in | `bool` | `false` | no |
 | `account_move_log_retention_days` | Log retention in days for the account move automation | `number` | `90` | no |
 | `policy_strategy_detach_log_retention_days` | Retention of the policy-strategy detach Lambda's own execution log group `/aws/lambda/tlz-policy-strategy-detach` (`0` = never expire). See [Lambda execution log groups](#lambda-execution-log-groups) | `number` | `365` | no |
 | `policy_strategy_detach_log_kms_key_arn` | Optional KMS key ARN for encrypting that log group. Empty keeps the CloudWatch service default encryption; the module creates no key | `string` | `""` | no |
@@ -42,6 +43,7 @@ Manages Organizational Units (OUs), Service Control Policies (SCPs), Tag Policie
 | `scp_revert_topic_name` | Name of the SCP change notification topic. The default is the module's standard name and may already exist in a deployed management account; because `CreateTopic` is an upsert, an apply-test against a live account overrides it with a `tlz-l4test-` name so teardown cannot delete the live topic. Must stay inside `tlz-` — see [Upsert-safe resource names](#upsert-safe-resource-names) | `string` | `"tlz-scp-revert-detection"` | no |
 | `scp_revert_rule_name` | Name of the EventBridge rule that detects SCP changes. Same contract as `scp_revert_topic_name` (`PutRule` is an upsert); must stay inside `tlz-` | `string` | `"tlz-scp-modification-detection"` | no |
 | `enable_scp_auto_revert` | Revert a detected SCP change automatically. Requires `enable_scp_revert_detection`. What is and is not reverted: [SCP change detection](#scp-change-detection) | `bool` | `false` | no |
+| `scp_revert_exempt_principal_arns` | IAM principal ARNs (exact, the role ARN with its path for an assumed role) whose SCP changes the auto-revert function never reverts; list the operator's own role when Terraform runs as it | `list(string)` | `[]` | no |
 | `scp_auto_revert_dlq_name` | Name of the SCP auto-revert Lambda's SQS dead-letter queue (created with `enable_scp_auto_revert`). `CreateQueue` is idempotent on identical attributes, so the same apply-test contract applies; the Lambda policy's `sqs:SendMessage` grant follows the name. Not confined to `tlz-` (no guardrail names an SQS queue) — see [Upsert-safe resource names](#upsert-safe-resource-names) | `string` | `"tlz-scp-auto-revert-dlq"` | no |
 
 ## Policy Strategy
@@ -130,22 +132,35 @@ one key per region in use. The key in the stack's own region is keyed
 
 ## Quarantine release
 
+With `quarantine_ou_name` set, the quarantine SCP is attached to that OU in
+the organization apply, before any account exists in it. The accounts module
+creates an account declared with `quarantined = true` inside this OU, so the
+account is never without the SCP, and configures it through the exempt access
+role. The release is a declaration change: `quarantined = false` on the
+account's entry and an apply of the accounts unit move the account to its
+declared OU. The OU takes one of the five SCP slots of its target, like any
+other quarantine target.
+
 `enable_quarantine_auto_detach` creates an EventBridge rule for `SUCCEEDED`
 of the pipelines in `quarantine_detach_pipeline_names` and an SNS topic that
-asks the subscribed addresses to release the quarantine SCP. The release is
-manual: detach the quarantine SCP from the accounts the run configured. No
-function detaches it, because the pipeline event does not name those
-accounts, and detaching from every target would release accounts the run
-never touched. The rule sees pipelines of the management account and its
-region only.
+asks the subscribed addresses for that release. The release is manual; no
+function moves an account or detaches the SCP, because the pipeline event
+does not name the accounts the run configured, and releasing every target
+would free accounts the run never touched. The rule sees pipelines of the
+management account and its region only.
 
 `enable_scp_auto_revert` adds a Lambda function. An `UpdatePolicy` on an SCP or
 RCP this module manages (the quarantine and pipeline SCPs included) is
 reverted to the content of the last apply, which the function carries in its
 package. An `UpdatePolicy` on any other policy and a `DeletePolicy` are
-reported as not reverted; review those changes by hand. A `DetachPolicy` is
-undone by attaching the policy again. Changes by `TLZDeploymentRole`, by the
-function's own role and by the existing exemption patterns are not reverted.
+reported as not reverted; review those changes by hand. A `DetachPolicy` of a
+policy this module manages is undone by attaching the policy again; the detach
+of the quarantine SCP (its manual release) and of any other policy is reported
+as not reverted. Changes by `TLZDeploymentRole`, by the function's own role, by
+the existing exemption patterns and by the principals listed in
+`scp_revert_exempt_principal_arns` (exact ARN) are not reverted. On the default
+path Terraform runs as the operator's own principal, which no pattern matches:
+list its role ARN there, or the function re-attaches what an apply detaches.
 
 ## Outputs
 
@@ -159,9 +174,10 @@ function's own role and by the existing exemption patterns are not reverted.
 | `partition` | Partition the configuration runs in |
 | `dns_suffix` | DNS suffix of the current partition |
 | `master_account_id` | Account ID of the organization's management account |
-| `ignored_ou_ids` | OU IDs marked `ignore = true` and therefore excluded from policy attachments |
+| `ignored_ou_ids` | IDs of every OU marked `ignore = true` and of every OU below one; accounts declared there are no deployment targets (policy attachments are unaffected) |
 | `chatbot_policy_ids` | Map of Chatbot policy name → policy ID |
 | `quarantine_scp_id` | ID of the Quarantine SCP (empty when disabled) |
+| `quarantine_ou_id` | ID of the OU named by `quarantine_ou_name` (empty when unset); the accounts module creates accounts marked `quarantined = true` inside it |
 | `scp_revert_sns_topic_arn` | ARN of the SNS topic for SCP revert notifications (empty when disabled) |
 | `scp_auto_revert_lambda_arn` | ARN of the SCP auto-revert Lambda function |
 | `account_move_lambda_arn` | ARN of the account move Lambda function (empty when disabled) |

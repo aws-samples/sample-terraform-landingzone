@@ -86,7 +86,11 @@ variable "organizational_units" {
   type = list(object({
     name        = string
     parent_name = optional(string, "__root__") # "__root__" = directly under Organization Root
-    ignore      = optional(bool, false)        # exclude from policy attachments
+    # ignore = true: accounts declared in this OU or below are no deployment
+    # targets; the fan-out units generate no provider for them and the
+    # OU-deployment membership skips them. Policy attachments are unaffected
+    # (the example attaches suspended-guardrails to Suspended).
+    ignore = optional(bool, false)
   }))
   default = []
 
@@ -134,7 +138,7 @@ variable "service_control_policies" {
   type = list(object({
     name        = string
     description = optional(string, "")
-    content     = optional(string, "") # JSON string (max 5120 characters)
+    content     = optional(string, "") # JSON string (max 10240 characters)
     targets     = list(string)         # OU names or account IDs
     type        = optional(string, "customer-managed")
     strategy    = optional(string, "deny-list")
@@ -148,9 +152,9 @@ variable "service_control_policies" {
   validation {
     condition = alltrue([
       for scp in var.service_control_policies :
-      length(try(jsonencode(jsondecode(scp.content)), scp.content)) <= 5120
+      length(try(jsonencode(jsondecode(scp.content)), scp.content)) <= 10240
     ])
-    error_message = "SCP content must not exceed 5120 characters in its compact JSON form (AWS limit)."
+    error_message = "SCP content must not exceed 10240 characters in its compact JSON form (AWS limit for SCPs)."
   }
 
   validation {
@@ -393,8 +397,8 @@ variable "quarantine_scp_content" {
 
   # Compact-form measurement, matching var.service_control_policies.
   validation {
-    condition     = var.quarantine_scp_content == "" || length(try(jsonencode(jsondecode(var.quarantine_scp_content)), var.quarantine_scp_content)) <= 5120
-    error_message = "quarantine_scp_content must be empty or at most 5120 characters in its compact JSON form (AWS SCP limit)."
+    condition     = var.quarantine_scp_content == "" || length(try(jsonencode(jsondecode(var.quarantine_scp_content)), var.quarantine_scp_content)) <= 10240
+    error_message = "quarantine_scp_content must be empty or at most 10240 characters in its compact JSON form (AWS SCP limit)."
   }
 }
 
@@ -544,7 +548,7 @@ variable "opt_in_regions" {
 }
 
 variable "enable_quarantine_auto_detach" {
-  description = "Notify scp_revert_notification_emails when a pipeline in quarantine_detach_pipeline_names succeeds, so an operator releases the quarantine SCP from the accounts that run configured. The release is manual: nothing detaches the SCP automatically. Requires enable_quarantine_scp = true."
+  description = "Notify scp_revert_notification_emails when a pipeline in quarantine_detach_pipeline_names succeeds, so an operator releases the accounts that run configured from the quarantine OU (quarantined = false on their entries). The release is manual: nothing moves an account or detaches the SCP automatically. Requires enable_quarantine_scp = true."
   type        = bool
   default     = false
 }
@@ -590,7 +594,7 @@ variable "quarantine_detach_rule_name" {
 # --- Account Move Automation ---
 
 variable "enable_account_move_automation" {
-  description = "Enable EventBridge + Lambda automation to move accounts between OUs based on Organizations API events. AWS Organizations delivers its CloudTrail events to EventBridge in us-east-1 only (aws partition), so the rule, the function, its log group and the log group's key are created in us-east-1 whatever region the stack runs in."
+  description = "Enable an EventBridge rule and a Lambda function that log Organizations CreateAccount and MoveAccount events to the function's log group; the function moves no account. AWS Organizations delivers its CloudTrail events to EventBridge in us-east-1 only (aws partition), so the rule, the function, its log group and the log group's key are created in us-east-1 whatever region the stack runs in."
   type        = bool
   default     = false
 }
@@ -707,9 +711,20 @@ variable "scp_revert_rule_name" {
 }
 
 variable "enable_scp_auto_revert" {
-  description = "Enable automatic revert of unauthorized SCP modifications via Lambda. Requires enable_scp_revert_detection = true. UpdatePolicy is reverted to the content this module deployed (SCPs, RCPs, quarantine and pipeline SCP); a policy the module does not manage and DeletePolicy are reported as not reverted. DetachPolicy is undone by re-attaching."
+  description = "Enable automatic revert of unauthorized SCP modifications via Lambda. Requires enable_scp_revert_detection = true. UpdatePolicy is reverted to the content this module deployed (SCPs, RCPs, quarantine and pipeline SCP); a policy the module does not manage and DeletePolicy are reported as not reverted. DetachPolicy of a policy this module manages is undone by re-attaching; the detach of the quarantine SCP (its manual release) and of any other policy is reported as not reverted. Changes are reverted whoever makes them, unless the caller matches the built-in exemptions (TLZDeploymentRole, the account access roles, the module's own functions) or is listed in scp_revert_exempt_principal_arns: on the default path every apply runs as the operator's own principal, so list it there or the function undoes the operator's own detaches."
   type        = bool
   default     = false
+}
+
+variable "scp_revert_exempt_principal_arns" {
+  description = "IAM principal ARNs whose SCP changes the auto-revert function never reverts, matched exactly against the caller. For an assumed role this is the role ARN with its path, for example arn:aws:iam::<management-account-id>:role/aws-reserved/sso.amazonaws.com/<region>/AWSReservedSSO_<permission-set>_<suffix> for an IAM Identity Center permission set. A listed principal is trusted like TLZDeploymentRole: a stolen credential of it is not reverted either."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for arn in var.scp_revert_exempt_principal_arns : can(regex("^arn:[a-z-]+:iam::[0-9]{12}:(role|user)/.+$", arn))])
+    error_message = "Each scp_revert_exempt_principal_arns entry must be an IAM role or user ARN (arn:<partition>:iam::<12-digit account>:role/... or :user/...)."
+  }
 }
 
 variable "scp_auto_revert_dlq_name" {
@@ -720,5 +735,23 @@ variable "scp_auto_revert_dlq_name" {
   validation {
     condition     = can(regex("^[a-zA-Z0-9_-]{1,80}$", var.scp_auto_revert_dlq_name))
     error_message = "scp_auto_revert_dlq_name must be 1-80 characters of letters, digits, underscore or hyphen — the SQS standard-queue naming rule (no dot, so no accidental .fifo suffix on a standard queue)."
+  }
+}
+
+# --- Quarantine OU ---
+
+variable "quarantine_ou_name" {
+  description = "Name of a declared organizational unit the quarantine SCP is attached to, in addition to quarantine_scp_targets. The accounts module creates an account marked quarantined = true inside this OU, so the account carries the SCP from the moment it exists; the release is quarantined = false, which moves the account to its declared OU. Empty attaches the SCP to quarantine_scp_targets only. Requires enable_quarantine_scp = true."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.quarantine_ou_name == "" || contains([for ou in var.organizational_units : ou.name], var.quarantine_ou_name)
+    error_message = "quarantine_ou_name must be empty or the name of a declared organizational_units entry."
+  }
+
+  validation {
+    condition     = var.quarantine_ou_name == "" || var.enable_quarantine_scp
+    error_message = "quarantine_ou_name requires enable_quarantine_scp = true: without the SCP the quarantine OU would hold new accounts unguarded."
   }
 }

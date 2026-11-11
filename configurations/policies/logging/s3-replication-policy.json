@@ -16,7 +16,9 @@
       "Action": [
         "s3:GetObjectVersionForReplication",
         "s3:GetObjectVersionAcl",
-        "s3:GetObjectVersionTagging"
+        "s3:GetObjectVersionTagging",
+        "s3:GetObjectRetention",
+        "s3:GetObjectLegalHold"
       ],
       "Resource": "${source_bucket_arn}/*"
     },

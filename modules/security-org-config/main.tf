@@ -5,6 +5,11 @@
 # - Security Hub org config
 # - Macie session (conditional on !is_eusc)
 # - Detective graph with member auto-enable (conditional on !is_eusc)
+# - The finding consumers of the administrator (consumers.tf): GuardDuty
+#   findings export, Macie classification export, Security Hub finding
+#   aggregator, automation rules, member enrolment and disabled controls.
+#   AWS ties each of them to the administrator account — only there do they
+#   reach the members' findings.
 #
 # The delegated-admin DESIGNATIONS (GuardDuty, Security Hub, Macie, Detective)
 # are made by modules/security from the management account — the only account
@@ -12,12 +17,14 @@
 
 # --- Partition Detection ---
 data "aws_partition" "current" {}
+data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
 locals {
   partition  = data.aws_partition.current.partition
   region     = data.aws_region.current.region
   arn_prefix = "arn:${local.partition}"
+  account_id = data.aws_caller_identity.current.account_id
 
   # EU Sovereign Cloud detection — the same derivation modules/security uses:
   # the detected partition decides on its own, so a stack that does not pass
@@ -34,6 +41,11 @@ resource "aws_guardduty_detector" "this" {
   count = var.enable_guardduty ? 1 : 0
 
   enable = true
+
+  # The administrator's frequency is the one AWS applies to the members'
+  # EventBridge notifications and to the export; null keeps the provider
+  # default (SIX_HOURS), so a deployment without an export plans no change.
+  finding_publishing_frequency = var.guardduty_export_frequency
 }
 
 resource "aws_guardduty_detector_feature" "s3_protection" {

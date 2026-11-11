@@ -36,7 +36,7 @@ resource "aws_macie2_organization_admin_account" "this" {
 # =============================================================================
 
 resource "aws_macie2_classification_export_configuration" "this" {
-  count = var.enable_macie && !local.is_eusc && var.macie_publish_sensitive_data_findings == true && var.central_log_bucket_name != "" ? 1 : 0
+  count = var.manage_finding_consumers && var.enable_macie && !local.is_eusc && var.macie_publish_sensitive_data_findings == true && var.central_log_bucket_name != "" ? 1 : 0
 
   s3_destination {
     bucket_name = var.central_log_bucket_name

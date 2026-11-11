@@ -3,10 +3,16 @@
 # Template for additional accounts: copy this directory together with
 # cross_account.hcl — the account name is derived from the directory name.
 #
-# The management networking stack supplies the resolution maps (subnets,
-# security groups, target groups of the application and network load
-# balancers). User-data templates travel as strings through the loader
+# Two stacks supply the resolution maps. The workload networking unit of this
+# account (../networking) supplies the security groups and target groups: an
+# auto-scaling group attaches only to a target group of its own account, and a
+# participant of a shared VPC launches instances only with groups it owns. The
+# management networking stack supplies the subnets, which stay management-owned
+# and shared. User-data templates travel as strings through the loader
 # (user_data_template inline or user_data_template_file resolved there).
+#
+# One toggle gates both units, enable_workload_compute, so the networking
+# dependency is never an excluded unit.
 
 include "root" {
   path = find_in_parent_folders("root.hcl")
@@ -38,7 +44,15 @@ dependency "networking" {
   config_path = "../../management/networking"
 
   mock_outputs = {
-    subnet_ids         = {}
+    subnet_ids = {}
+  }
+  mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
+}
+
+dependency "workload_networking" {
+  config_path = "../networking"
+
+  mock_outputs = {
     security_group_ids = {}
     target_group_arns  = {}
   }
@@ -54,11 +68,13 @@ inputs = {
   imdsv1_acknowledged_launch_templates = local.compliance.locals.workload_imdsv1_acknowledged_launch_templates
   autoscaling_groups                   = try(local.common.locals.workload_autoscaling_groups, {})
 
-  # Resolution maps from the management networking stack: entries reference
-  # subnets, security groups and target groups by these names.
+  # Resolution maps: the shared subnets from the management networking stack
+  # (keys vpc_name.subnet_name); the security groups (keys vpc_name.sg_name)
+  # and target groups (names) from the workload networking unit of this
+  # account.
   subnet_ids         = dependency.networking.outputs.subnet_ids
-  security_group_ids = dependency.networking.outputs.security_group_ids
-  target_group_arns  = dependency.networking.outputs.target_group_arns
+  security_group_ids = dependency.workload_networking.outputs.security_group_ids
+  target_group_arns  = dependency.workload_networking.outputs.target_group_arns
 
   default_tags = local.common.locals.default_tags
 }

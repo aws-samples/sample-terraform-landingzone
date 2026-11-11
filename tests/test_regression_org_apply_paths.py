@@ -1,4 +1,4 @@
-"""regression: four ways the organization-wide plan and apply went wrong.
+"""regression: eight ways the organization-wide plan and apply went wrong.
 
 Each case renders the stacks with Terragrunt itself, the way the IMDSv1 wiring
 pin does: a staged copy of the tracked tree under ``tmp_path``, env/common.hcl
@@ -18,6 +18,28 @@ a placeholder account id. Nothing reaches AWS and no credentials are needed.
 4. The warm-account guard of the ou-deployment units passed whenever the set
    of active accounts was empty, which is real data on an apply, not only the
    mock of a first plan.
+5. stacks/management/accounts could not plan before the organization unit had
+   applied: its mock handed an empty OU map, so no account's OU resolved, and
+   the module's deployment_account provider had no profile, so an operator
+   who works through aws_profile alone had no credentials for it.
+6. Units whose dependency was switched off stayed in the first apply:
+   management/cur read the outputs of the excluded logging unit, the
+   config-recorder sidecars those of logging, audit/security-org-config those
+   of security, and each failed with "detected no outputs". The units now
+   follow the toggle of their dependency (cur no longer reads logging at all),
+   and security-org-config reads the merged Macie switch, so an operator file
+   without ``enable_macie`` still renders.
+7. stacks/management/networking waited for config-rules although it reads
+   none of its outputs, which put networking, iam and every unit after them
+   two levels later in the organization run.
+8. The finding consumers (GuardDuty export, Macie export, Security Hub
+   aggregator and automation rules) ran in the management account, where they
+   see that account's findings only. With ``security_finding_consumers_in_audit``
+   (default true) and a resolved Audit account, management/security creates
+   none of them, audit/security-org-config carries the rules, the export and
+   the member list without the Audit account, and audit/monitoring alerts on
+   them after it; with the switch off every Audit input is empty, the Audit
+   monitoring unit is excluded and the management unit keeps today's layout.
 
 Without ``terragrunt`` on PATH the test skips and says so (the CI ``test`` job
 installs it before ``make test``).
@@ -126,7 +148,12 @@ def test_regression_audit_security_config_makes_no_management_only_registration(
 def test_regression_every_account_lookup_names_the_home_region(tmp_path):
     root, env, log = _stage(tmp_path)
     region = REGION_RE.search((root / "env/common.hcl").read_text()).group(1)
-    units = sorted(p.parent.relative_to(root).as_posix() for p in (root / "stacks").rglob("cross_account.hcl"))
+    # The pipeline's sidecar builds its role from env/accounts.hcl alone and makes no lookup.
+    units = sorted(
+        p.parent.relative_to(root).as_posix()
+        for p in (root / "stacks").rglob("cross_account.hcl")
+        if "ssm get-parameter" in p.read_text()
+    )
     assert units, "no stacks/**/cross_account.hcl: nothing to pin"
     problems = []
     for unit in units:
@@ -177,3 +204,141 @@ def test_regression_warm_account_guard_passes_only_the_mock(tmp_path):
     assert {u: guard(u) for u in units} == {u: "false" for u in units}, (
         "a real empty set of active accounts must not short-circuit the guard"
     )
+
+
+def test_regression_accounts_unit_plans_before_the_organization_exists(tmp_path):
+    root, env, _ = _stage(tmp_path)
+    rendered = _render(root, "stacks/management/accounts", env)
+    common = rendered["locals"]["common"]["locals"]
+    inputs = rendered["inputs"]
+    assert common["aws_profile"] and inputs.get("aws_profile") == common["aws_profile"], (
+        "the accounts unit must hand aws_profile to the module's deployment_account provider"
+    )
+    assert "deployment_provider" not in rendered["generate"], "the unused 'deployment' provider alias is generated again"
+    mock = rendered["dependency"]["organization"]["mock_outputs"]["ou_name_to_id"]
+    assert sorted(mock) == sorted(ou["name"] for ou in common["organizational_units"]), (
+        "the first plan's mock must name every declared OU, or the accounts' OUs do not resolve: %r" % mock
+    )
+    assert all(re.fullmatch(r"ou-[a-z0-9]+-[a-z0-9]+", v) for v in mock.values()), mock
+
+
+# Units that read the outputs of a toggled unit, with the toggle of that unit.
+TOGGLED_DEPENDENCY_UNITS = {
+    "stacks/audit/config-recorder": "enable_logging",
+    "stacks/log-archive/config-recorder": "enable_logging",
+    "stacks/workload-dev/config-recorder": "enable_logging",
+    "stacks/audit/security-org-config": "enable_security",
+}
+
+
+def _switch_on(root, toggle):
+    path = root / "env/common.hcl"
+    text, n = re.subn(r"^(\s*%s\s*=\s*)false\b" % toggle, r"\1true", path.read_text(), flags=re.MULTILINE)
+    assert n == 1, "env/common.hcl: no single '%s = false' line to switch on" % toggle
+    path.write_text(text)
+
+
+def test_regression_first_apply_skips_units_whose_dependency_is_off(tmp_path):
+    # The stand-in aws resolves every account id: the state of the second pass.
+    root, env, _ = _stage(tmp_path)
+    excluded = {u: _render(root, u, env)["exclude"]["if"] for u in TOGGLED_DEPENDENCY_UNITS}
+    assert excluded == {u: True for u in TOGGLED_DEPENDENCY_UNITS}, (
+        "with the dependency's toggle off these units still run and fail with 'detected no outputs': %r"
+        % sorted(u for u, off in excluded.items() if not off)
+    )
+    cur = _render(root, "stacks/management/cur", env)
+    assert cur["exclude"]["if"] is False, "the example ships the Cost and Usage Report on"
+    assert not cur.get("dependency"), (
+        "management/cur reads outputs of %s; with the dedicated bucket it needs none, and an "
+        "excluded dependency has no outputs to read on apply" % sorted(cur["dependency"])
+    )
+    for toggle in sorted(set(TOGGLED_DEPENDENCY_UNITS.values())):
+        _switch_on(root, toggle)
+    included = {u: _render(root, u, env)["exclude"]["if"] for u in TOGGLED_DEPENDENCY_UNITS}
+    assert included == {u: False for u in TOGGLED_DEPENDENCY_UNITS}, (
+        "with the toggles on and the account ids resolved every unit must run: %r" % included
+    )
+
+
+def test_regression_security_org_config_reads_the_merged_macie_switch(tmp_path):
+    root, env, _ = _stage(tmp_path)
+    _rewrite(root / "env/common.hcl", "  enable_macie           = false\n", "")
+    inputs = _render(root, "stacks/audit/security-org-config", env)["inputs"]
+    assert inputs["enable_macie"] is True, (
+        "without enable_macie in env/common.hcl the base value (true) applies, as in "
+        "management/security; got %r" % inputs["enable_macie"]
+    )
+
+
+def test_regression_networking_does_not_wait_on_config_rules(tmp_path):
+    root, env, _ = _stage(tmp_path)
+    proc = subprocess.run(  # nosec B603 B607 -- argv list of literals, cwd inside the staged copy, no shell
+        ["terragrunt", "find", "--dependencies", "--json", "--log-level", "error"],
+        cwd=root / "stacks", env=env, capture_output=True, text=True, timeout=300,
+    )
+    assert proc.returncode == 0, "terragrunt find failed (rc=%d):\n%s" % (proc.returncode, proc.stderr[-2000:])
+    deps = {u["path"]: set(u.get("dependencies") or []) for u in json.loads(proc.stdout)}
+    assert "management/config-rules" not in deps["management/networking"], (
+        "networking waits on config-rules again: %s" % sorted(deps["management/networking"])
+    )
+    # The edges that stay: networking's real inputs, and the two ordering edges kept on purpose.
+    assert {"management/accounts", "management/logging", "management/security"} <= deps["management/networking"]
+    assert "management/security" in deps["management/iam"]
+    assert "audit/security-config" in deps["management/config-rules"]
+
+
+def _dependencies(root, env):
+    proc = subprocess.run(  # nosec B603 B607 -- argv list of literals, cwd inside the staged copy, no shell
+        ["terragrunt", "find", "--dependencies", "--json", "--log-level", "error"],
+        cwd=root / "stacks", env=env, capture_output=True, text=True, timeout=300,
+    )
+    assert proc.returncode == 0, "terragrunt find failed (rc=%d):\n%s" % (proc.returncode, proc.stderr[-2000:])
+    return {u["path"]: set(u.get("dependencies") or []) for u in json.loads(proc.stdout)}
+
+
+def test_regression_finding_consumers_follow_the_switch(tmp_path):
+    root, env, _ = _stage(tmp_path)
+    for toggle in ("enable_logging", "enable_security", "enable_monitoring"):
+        _switch_on(root, toggle)
+    # The Audit account resolves on both sides with the same placeholder: env/accounts.hcl
+    # for the management units, the stand-in SSM answer for the Audit units. The management
+    # account and one more active account give the member list something to carry.
+    accounts = root / "env/accounts.hcl"
+    _rewrite(accounts, 'audit_account_id       = ""', 'audit_account_id       = "%s"' % PLACEHOLDER_ID)
+    _rewrite(accounts, 'management_account_id  = ""', 'management_account_id  = "123456789012"')
+    org_unit = root / "stacks/audit/security-org-config/terragrunt.hcl"
+    _rewrite(org_unit, "active_account_ids = {}", 'active_account_ids = { Audit = "%s", Workload = "444455556666" }' % PLACEHOLDER_ID)
+
+    security = _render(root, "stacks/management/security", env)["inputs"]
+    assert security["manage_finding_consumers"] is False, (
+        "with the switch on and the Audit account resolved, management/security still creates the consumers"
+    )
+    org = _render(root, "stacks/audit/security-org-config", env)["inputs"]
+    assert org["security_hub_automation_rules"] and org["security_hub_automation_rules"] == security["security_hub_automation_rules"], (
+        "audit/security-org-config must carry the same automation rules the management unit reads from the loader"
+    )
+    assert org["guardduty_export_frequency"] == security["guardduty_export_frequency"] != None  # noqa: E711 -- rendered JSON null
+    assert sorted(org["security_hub_member_account_ids"]) == ["123456789012", "444455556666"], (
+        "the member list must carry every active account and the management account, never the Audit account: %r"
+        % org["security_hub_member_account_ids"]
+    )
+    monitoring = _render(root, "stacks/audit/monitoring", env)
+    assert monitoring["exclude"]["if"] is False, "audit/monitoring must run with the switch on"
+    assert monitoring["inputs"]["dashboard_name"] != "TLZ-Landing-Zone-Health", "the Audit dashboard must not adopt the management one"
+    deps = _dependencies(root, env)
+    assert "audit/security-org-config" in deps["audit/monitoring"], (
+        "audit/monitoring must run after audit/security-org-config: %s" % sorted(deps["audit/monitoring"])
+    )
+
+    _rewrite(root / "env/common.hcl", "security_finding_consumers_in_audit = true", "security_finding_consumers_in_audit = false")
+    security = _render(root, "stacks/management/security", env)["inputs"]
+    assert security["manage_finding_consumers"] is True, "with the switch off the consumers must stay in management/security"
+    org = _render(root, "stacks/audit/security-org-config", env)["inputs"]
+    empty = {
+        "security_hub_automation_rules": [], "security_hub_disabled_controls": [], "security_hub_member_account_ids": [],
+        "security_hub_aggregation_regions": [], "enable_security_hub_region_aggregation": False,
+        "macie_publish_sensitive_data_findings": False, "guardduty_export_frequency": None,
+        "central_log_bucket_name": "", "guardduty_export_kms_key_arn": "",
+    }
+    assert {k: org[k] for k in empty} == empty, "with the switch off every consumer input of audit/security-org-config must be empty"
+    assert _render(root, "stacks/audit/monitoring", env)["exclude"]["if"] is True, "audit/monitoring must be excluded with the switch off"

@@ -122,7 +122,7 @@ check "guardduty_deployment_targets_warning" {
 
 # Wait for S3 bucket policy and KMS key policy to propagate before GuardDuty validates permissions
 resource "time_sleep" "guardduty_export_wait" {
-  count = var.enable_guardduty && var.guardduty_export_frequency != null && var.central_log_bucket_name != "" ? 1 : 0
+  count = var.manage_finding_consumers && var.enable_guardduty && var.guardduty_export_frequency != null && var.central_log_bucket_name != "" ? 1 : 0
 
   create_duration = "30s"
 
@@ -147,8 +147,11 @@ locals {
   )
 }
 
+# The export of this account. With manage_finding_consumers = false the
+# administrator's export (modules/security-org-config) carries every account's
+# findings, this one included, and nothing is created here.
 resource "aws_guardduty_publishing_destination" "this" {
-  count = var.enable_guardduty && var.guardduty_export_frequency != null && var.central_log_bucket_name != "" ? 1 : 0
+  count = var.manage_finding_consumers && var.enable_guardduty && var.guardduty_export_frequency != null && var.central_log_bucket_name != "" ? 1 : 0
 
   detector_id      = aws_guardduty_detector.this[0].id
   destination_arn  = local.guardduty_export_destination_arn

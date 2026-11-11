@@ -11,8 +11,17 @@
 #   4. Validation failures — invalid AMI format, invalid http_tokens,
 #      association with two document references, association without target.
 #
-# Providers used directly by the module: aws (default only, no aliases).
-mock_provider "aws" {}
+# Providers used directly by the module: aws (default only, no aliases). The
+# caller identity is pinned: the traffic source attachment compares the account
+# of each target group ARN against it.
+mock_provider "aws" {
+  override_data {
+    target = data.aws_caller_identity.current
+    values = {
+      account_id = "111111111111"
+    }
+  }
+}
 
 # -----------------------------------------------------------------------------
 # Scenario 1: Toggle-Off — enable_ec2_compute = false => zero resources
@@ -595,6 +604,45 @@ run "duplicate_acknowledgement_rejected" {
   }
 
   expect_failures = [var.imdsv1_acknowledged_launch_templates]
+}
+
+# -----------------------------------------------------------------------------
+# Scenario 7: an auto-scaling group is attached to a target group of its own
+# account only. AWS refuses the attachment of a target group another account
+# owns at apply; the module refuses it at plan, naming the target group.
+# The caller identity is pinned to 111111111111 in the mock above, the ARNs of
+# the custom configuration carry that account.
+# -----------------------------------------------------------------------------
+
+run "ec2_compute_refuses_foreign_account_target_group" {
+  command = plan
+
+  variables {
+    enable_ec2_compute = true
+    subnet_ids = {
+      "workload.private-a" = "subnet-0aaa1111bbb22222c"
+    }
+    target_group_arns = {
+      "web-tg" = "arn:aws:elasticloadbalancing:eu-central-1:999999999999:targetgroup/web-tg/aaaabbbbcccc0002"
+    }
+    launch_templates = {
+      web = {
+        ami_id        = "ami-0abc1234def567890"
+        instance_type = "m5.large"
+      }
+    }
+    autoscaling_groups = {
+      web-fleet = {
+        launch_template = "web"
+        min_size        = 1
+        max_size        = 2
+        subnet_names    = ["workload.private-a"]
+        target_groups   = ["web-tg"]
+      }
+    }
+  }
+
+  expect_failures = [aws_autoscaling_traffic_source_attachment.this]
 }
 
 # -----------------------------------------------------------------------------

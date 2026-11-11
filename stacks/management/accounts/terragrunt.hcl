@@ -34,30 +34,20 @@ terraform {
   }
 }
 
-# The accounts module requires aws.deployment provider alias (for SSM params in Deployment Account).
-# When deployment account is disabled, this alias points to the same account as the default provider.
-generate "deployment_provider" {
-  path      = "deployment-provider.tf"
-  if_exists = "overwrite_terragrunt"
-  contents  = <<-EOF
-    provider "aws" {
-      alias   = "deployment"
-      region  = "${local.common.locals.region}"
-      profile = "${local.common.locals.aws_profile}" != "" ? "${local.common.locals.aws_profile}" : null
-
-      default_tags {
-        tags = ${jsonencode(local.common.locals.default_tags)}
-      }
-    }
-  EOF
-}
-
 dependency "organization" {
   config_path = "../organization"
 
+  # One placeholder id per declared OU, so the first plan, before the
+  # organization unit has applied, resolves every account's OU. No OU is
+  # ignored in the mock, so the first plan suspends no account.
   mock_outputs = {
-    ou_name_to_id = {}
-    scp_ids       = {}
+    ou_name_to_id  = { for ou in local.common.locals.organizational_units : ou.name => "ou-mock-00000000" }
+    ignored_ou_ids = []
+    scp_ids        = {}
+    # The quarantine OU gets the same placeholder while one is configured, so
+    # a quarantined account resolves on the first plan; without one the module
+    # refuses a quarantined account, as it does after the apply.
+    quarantine_ou_id = try(local.common.locals.quarantine_ou_name, "") != "" ? "ou-mock-00000000" : ""
   }
   mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
 }
@@ -71,7 +61,13 @@ dependency "control_tower" {
 inputs = {
   organization_root_id = "" # the module falls back to a data source
   ou_name_to_id        = dependency.organization.outputs.ou_name_to_id
-  accounts             = local.common.locals.accounts
+  # OU that accounts marked quarantined = true are created in (empty when the
+  # organization unit has no quarantine_ou_name).
+  quarantine_ou_id = dependency.organization.outputs.quarantine_ou_id
+  # Accounts declared in these OUs (ignore = true, or below one) are suspended:
+  # created and kept, but out of active_account_ids and so of every fan-out.
+  ignored_ou_ids = dependency.organization.outputs.ignored_ou_ids
+  accounts       = local.common.locals.accounts
   # Two roles: account_access_role_name is the role the stacks and
   # the module's deployment-account provider ASSUME to reach existing accounts;
   # created_account_role_name is the role CreateAccount makes INSIDE a new
@@ -90,6 +86,7 @@ inputs = {
   enable_deployment_account       = local.common.locals.enable_deployment_account
   deployment_account_id           = local.accounts.locals.deployment_account_id
   region                          = local.common.locals.region
+  aws_profile                     = local.common.locals.aws_profile
   enable_control_tower_enrollment = try(local.common.locals.enable_control_tower_enrollment, false)
   enable_account_warming          = try(local.common.locals.enable_account_warming, false)
 

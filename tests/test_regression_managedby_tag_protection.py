@@ -9,7 +9,8 @@ exempt landing-zone roles.
 The test reads the shipped documents: the value the rules trust is the value
 the statement protects, the statement's exemptions are the ones the other
 guardrails use, and the example attaches the SCP to every top-level OU except
-Suspended, which denies everything anyway; nested OUs inherit it.
+Suspended and Quarantine, whose own SCPs deny everything already (the
+quarantine SCP exempts the same landing-zone roles); nested OUs inherit it.
 """
 
 import json
@@ -60,4 +61,7 @@ def test_regression_managedby_protection_reaches_every_ou():
         assert match, f"{name} is not in the example's service_control_policies"
         targets |= set(re.findall(r'"([^"]+)"', match.group(1)))
     top_level = set(re.findall(r'\{ name = "([^"]+)", parent_name = "__root__" \}', example))
-    assert top_level - {"Suspended"} <= targets, sorted(top_level - {"Suspended"} - targets)
+    # Suspended and Quarantine carry deny-all SCPs of their own; the quarantine
+    # SCP exempts the same roles ProtectManagedByTag exempts.
+    denied_anyway = {"Suspended", "Quarantine"}
+    assert top_level - denied_anyway <= targets, sorted(top_level - denied_anyway - targets)

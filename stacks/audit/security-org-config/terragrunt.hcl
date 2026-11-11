@@ -4,6 +4,15 @@
 # This stack configures org-wide security service enablement from the Audit
 # account (delegated admin). It depends on management/security which registers
 # the delegated admin for each service.
+#
+# With security_finding_consumers_in_audit (env/common.hcl, default true) this
+# unit also runs the finding consumers of the administrator: the GuardDuty
+# findings export and the Macie classification export into the central log
+# bucket of management/logging, the Security Hub finding aggregator, the
+# automation rules, the disabled controls and the enrolment of the existing
+# accounts as Security Hub members. management/security then creates none of
+# its own. With the switch false every consumer input below is empty and the
+# consumers stay in the management account.
 
 include "root" {
   path = find_in_parent_folders("root.hcl")
@@ -11,6 +20,7 @@ include "root" {
 
 locals {
   common     = read_terragrunt_config(find_in_parent_folders("env/common.hcl"))
+  accounts   = read_terragrunt_config(find_in_parent_folders("env/accounts.hcl"))
   compliance = read_terragrunt_config("${get_repo_root()}/configurations/loader.hcl")
 
   # Cross-account access parameters, shared with stacks/root.hcl. The unit
@@ -22,11 +32,17 @@ locals {
   account_id    = local.cross_account.locals.account_id
 
   partition = local.common.locals.partition
+
+  # Where the finding consumers run: here, while the switch is on and the Audit
+  # account resolves. Same expression as in stacks/management/security, which
+  # creates its own consumers exactly when this is false.
+  consumers_in_audit = try(local.common.locals.security_finding_consumers_in_audit, true) && local.account_id != ""
 }
 
-# Skip execution when audit account ID is not available
+# Skip execution when the audit account ID is not available, and while
+# management/security is switched off: that unit then has no outputs to read.
 exclude {
-  if      = local.account_id == ""
+  if      = local.account_id == "" || !local.common.locals.enable_security
   actions = ["all"]
 }
 
@@ -44,11 +60,35 @@ dependency "security" {
   mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
 }
 
+# The central log bucket and its key: the export destinations of the finding
+# consumers. Same mocks as in stacks/management/security — an empty bucket
+# name creates no export on a plan before the logging unit exists.
+dependency "logging" {
+  config_path = "../../management/logging"
+
+  mock_outputs = {
+    central_log_bucket_name = ""
+    kms_key_arn             = ""
+  }
+  mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
+}
+
+# The accounts to enrol as Security Hub members. Warm accounts are no
+# deployment targets, so the active set is read.
+dependency "accounts" {
+  config_path = "../../management/accounts"
+
+  mock_outputs = {
+    active_account_ids = {}
+  }
+  mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
+}
+
 inputs = {
   # Service toggles — derived from management/security outputs
   enable_guardduty    = dependency.security.outputs.guardduty_detector_id != ""
   enable_security_hub = dependency.security.outputs.security_hub_arn != ""
-  enable_macie        = local.common.locals.enable_macie
+  enable_macie        = local.compliance.locals.filtered_enable_macie
   enable_detective    = try(local.common.locals.enable_detective, false)
 
   # Partition awareness
@@ -64,4 +104,31 @@ inputs = {
 
   # Security Hub standards from compliance loader
   security_hub_standards = local.compliance.locals.filtered_security_hub_standards
+
+  # ---------------------------------------------------------------------------
+  # Finding consumers of the administrator (see the header). The same loader
+  # locals stacks/management/security reads; every value is empty while the
+  # consumers stay in the management account.
+  # ---------------------------------------------------------------------------
+  central_log_bucket_name               = local.consumers_in_audit ? dependency.logging.outputs.central_log_bucket_name : ""
+  guardduty_export_kms_key_arn          = local.consumers_in_audit ? dependency.logging.outputs.kms_key_arn : ""
+  guardduty_export_frequency            = local.consumers_in_audit ? local.compliance.locals.guardduty_export_frequency : null
+  guardduty_export_prefix               = local.consumers_in_audit ? local.compliance.locals.guardduty_export_prefix : "guardduty/"
+  macie_publish_sensitive_data_findings = local.consumers_in_audit ? local.compliance.locals.filtered_macie_publish_sensitive_data_findings : false
+
+  enable_security_hub_region_aggregation = local.consumers_in_audit ? local.compliance.locals.enable_security_hub_region_aggregation : false
+  security_hub_aggregation_regions       = local.consumers_in_audit ? local.compliance.locals.security_hub_aggregation_regions : []
+  security_hub_automation_rules          = local.consumers_in_audit ? local.compliance.locals.security_hub_automation_rules : []
+  security_hub_disabled_controls         = local.consumers_in_audit ? local.compliance.locals.security_hub_disabled_controls : []
+
+  # Every active account and the management account become Security Hub
+  # members of this administrator; the Audit account itself never does (the
+  # module refuses it). The management account id comes from env/accounts.hcl;
+  # empty there, it is not enrolled.
+  security_hub_member_account_ids = local.consumers_in_audit ? [
+    for id in concat(
+      values(dependency.accounts.outputs.active_account_ids),
+      compact([try(local.accounts.locals.management_account_id, "")]),
+    ) : id if id != local.account_id
+  ] : []
 }

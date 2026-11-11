@@ -25,6 +25,19 @@ locals {
   # - Terragrunt 1.0 evaluates both branches of a ternary, so no run_cmd
   #   validation is wrapped in one; the only run_cmd is the clone guard below (deliberate, unconditional)
 
+  # With the deployment account on and the S3 backend, every unit's backend
+  # assumes a role in that account (remote_state below). An empty
+  # deployment_account_id would reach that ARN as an empty account segment
+  # and fail at init with a message about the ARN, not about the missing
+  # value; refuse it here by name. Same text and pattern as
+  # stacks/deployment/bootstrap, armed only when the backend would use it.
+  # One line, as _state_clone_ok below: the security scanner's HCL parser does
+  # not read a multi-line boolean that opens with a negation.
+  _deployment_account_id_ok = !local.enable_deployment_account || local.common.locals.state_backend != "s3" || can(regex("^[0-9]{12}$", local.deployment_account_id))
+  _deployment_account_id_guard = local._deployment_account_id_ok ? "ok" : file(
+    "ERROR: deployment_account_id in env/accounts.hcl is empty or not a 12-digit account ID. With enable_deployment_account = true the state backend of every unit assumes a role in that account and cannot build its ARN. Record the deployment account's ID in env/accounts.hcl first."
+  )
+
   # --- Local state backend location ---
   # With state_backend = "local", state lives OUTSIDE the repository:
   # $TLZ_STATE_DIR when set, otherwise ~/.tlz-state. Two hard requirements:
@@ -109,20 +122,6 @@ locals {
   cross_account_role_arn = try(local._cross_account.locals.assume_role_arn, "")
 
   # Pre-compute provider contents (Terragrunt 1.0 can't do ternary with heredocs inline)
-  _provider_deployment = <<-EOF
-    provider "aws" {
-      region = "${local.region}"
-
-      assume_role {
-        role_arn = "arn:${local.partition}:iam::${local.management_account_id}:role/TLZDeploymentRole"
-      }
-
-      default_tags {
-        tags = ${jsonencode(local.tags)}
-      }
-    }
-  EOF
-
   _provider_direct = <<-EOF
     provider "aws" {
       region  = "${local.region}"
@@ -152,12 +151,16 @@ locals {
     }
   EOF
 
-  # A cross-account unit keeps its own access path; the deployment-account
-  # branch applies to the units that run in the management account.
-  _provider_contents = (local.cross_account_role_arn != ""
-    ? local._provider_cross_account
-    : (local.enable_deployment_account ? local._provider_deployment : local._provider_direct)
-  )
+  # A cross-account unit keeps its own access path; every other unit runs as
+  # the caller's own credential in the management account. There is no
+  # deployment-account branch here on purpose: the units of the management
+  # account (stacks/management/deployment-role included, which CREATES
+  # TLZDeploymentRole and so cannot assume it) run as the operator's profile,
+  # and the pipeline becomes a management-account principal before Terragrunt
+  # starts -- its build writes a profile of the configured name that assumes
+  # TLZDeploymentRole (modules/pipeline), so it walks exactly the operator's
+  # path from here on.
+  _provider_contents = local.cross_account_role_arn != "" ? local._provider_cross_account : local._provider_direct
 }
 
 # Remote State: S3 + DynamoDB or local (controlled via state_backend in env/common.hcl)
@@ -191,33 +194,43 @@ locals {
 remote_state {
   backend = local.common.locals.state_backend
 
-  config = local.common.locals.state_backend == "s3" ? merge(
-    {
+  # Two maps merged: the backend's own configuration, then the role hop of the
+  # deployment account. Merged rather than chosen by one conditional, because
+  # a conditional whose branches differ in shape (a nested assume_role object
+  # on one side only) does not evaluate -- and because the default path must
+  # stay exactly the map it has always been.
+  config = merge(
+    local.common.locals.state_backend == "s3" ? {
       bucket         = local.common.locals.state_bucket_name
       key            = "${path_relative_to_include()}/terraform.tfstate"
       region         = local.region
       encrypt        = true
       dynamodb_table = local.common.locals.lock_table_name
+      profile        = local.profile
+      } : {
+      # With state_backend = "local" this MUST be set, MUST be absolute, and
+      # MUST point outside the repository — see the state_dir local above for
+      # the reasons behind those rules. Keyed per unit by
+      # path_relative_to_include() exactly like the S3 key above. The two
+      # bootstrap units do not include this file and repeat the same shape
+      # locally.
+      path = "${local.state_dir}/${path_relative_to_include()}/terraform.tfstate"
     },
     # State bucket and lock table live in the deployment account, so the backend
-    # has to assume a role there: the cross-account role that every member
-    # account already has and that stacks/deployment/bootstrap uses to create
-    # the bucket in the first place. No module creates a dedicated state-access
-    # role, so naming one would break backend initialization for every unit.
-    local.enable_deployment_account ? {
-      role_arn = "arn:${local.partition}:iam::${local.deployment_account_id}:role/${local.account_access_role_name}"
-      } : {
-      profile = local.profile
-    }
-    ) : {
-    # With state_backend = "local" this MUST be set, MUST be absolute, and
-    # MUST point outside the repository — see the state_dir local above for
-    # the reasons behind those rules. Keyed per unit by
-    # path_relative_to_include() exactly like the S3 key above. The two
-    # bootstrap units do not include this file and repeat the same shape
-    # locally.
-    path = "${local.state_dir}/${path_relative_to_include()}/terraform.tfstate"
-  }
+    # authenticates with the caller's profile and then assumes a role there: the
+    # cross-account role that every member account already has and that
+    # stacks/deployment/bootstrap uses to create the bucket in the first place.
+    # No module creates a dedicated state-access role, so naming one would
+    # break backend initialization for every unit. The role goes into the
+    # nested assume_role block: the s3 backend of Terraform 1.14+ has no
+    # top-level role_arn and refuses one at init ("Unsupported argument").
+    local.common.locals.state_backend == "s3" && local.enable_deployment_account ? {
+      assume_role = {
+        role_arn     = "arn:${local.partition}:iam::${local.deployment_account_id}:role/${local.account_access_role_name}"
+        session_name = "tlz-state"
+      }
+    } : {}
+  )
 
   generate = {
     path      = "backend.tf"
@@ -264,13 +277,5 @@ errors {
     ]
     max_attempts       = 5
     sleep_interval_sec = 30
-  }
-
-  retry "aws_create_errors" {
-    retryable_errors = [
-      "(?s).*Error creating.*",
-    ]
-    max_attempts       = 3
-    sleep_interval_sec = 15
   }
 }

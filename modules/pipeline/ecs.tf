@@ -156,7 +156,10 @@ resource "aws_ecs_task_definition" "pipeline" {
       name      = "terragrunt"
       image     = var.ecs_task_image
       essential = true
-      command   = ["sh", "-c", "terragrunt run --all -- plan && echo 'Plan complete'"]
+      # The profile first (local.pipeline_profile_command, main.tf): it assumes
+      # the management deployment role with the task role, the credential
+      # EcsContainer resolves on Fargate.
+      command = ["sh", "-c", "${local.pipeline_profile_command} && terragrunt run --all -- plan && echo 'Plan complete'"]
       logConfiguration = {
         logDriver = "awslogs"
         options = {

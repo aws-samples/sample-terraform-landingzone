@@ -25,6 +25,12 @@ variable "ou_name_to_id" {
   default     = {}
 }
 
+variable "account_ou_names" {
+  description = "Names of the account's OU and of every OU above it. A deployment target naming one of them selects the account, so an OU target reaches the accounts of its nested OUs. Empty: only the OU of account_ou_id selects it."
+  type        = list(string)
+  default     = []
+}
+
 variable "partition" {
   description = "AWS partition of the deployment (aws or aws-eusc); expands partition-neutral managed policy names."
   type        = string
@@ -37,7 +43,7 @@ variable "partition" {
 }
 
 variable "roles" {
-  description = "IAM role definitions, the same list the iam stack reads. A role is created in this account when one of its deployment_targets is the account's name, its ID or the name of its OU; a role without deployment_targets is never created here. customer_managed_policy_names and a permissions_boundary given by name refer to customer_managed_policies created in the same account."
+  description = "IAM role definitions, the same list the iam stack reads. A role is created in this account when one of its deployment_targets is the account's name, its ID, the name of its OU or of an OU above it; a role without deployment_targets is never created here. customer_managed_policy_names and a permissions_boundary given by name refer to customer_managed_policies created in the same account."
   type = list(object({
     name                          = string
     assume_role_policy            = string # JSON-String

@@ -75,6 +75,18 @@ inputs = {
   # GuardDuty export prefix: same loader value the security stack passes to
   # its publishing destination, so grant and write path cannot drift apart.
   guardduty_export_prefix = local.compliance.locals.guardduty_export_prefix
+  # The Audit account holds the GuardDuty publishing destination and the Macie
+  # classification export once the finding consumers run there
+  # (stacks/audit/security-org-config); the bucket and key grants admit it.
+  # Resolved as in stacks/management/security: env/accounts.hcl first, else the
+  # accounts stack output. Empty before the first accounts apply (the mock
+  # above carries no Audit entry) — the grants then name the management
+  # account alone, as before.
+  finding_export_source_account_ids = compact([
+    local.accounts.locals.audit_account_id != ""
+    ? local.accounts.locals.audit_account_id
+    : lookup(dependency.accounts.outputs.account_ids, "Audit", "")
+  ])
   # Source: compliance loader (base.tfvars → loader.hcl)
   enable_elb_log_bucket    = local.compliance.locals.enable_elb_log_bucket
   elb_log_bucket_lifecycle = local.compliance.locals.elb_log_bucket_lifecycle

@@ -1,10 +1,19 @@
 # Security module: GuardDuty, Security Hub, Macie, IAM Access Analyzer, Password Policy
 #
-# IMPORTANT: Org-wide configurations (GuardDuty Org Config, Security Hub Org Config,
-# Findings Export) are managed from the Delegated Admin account (Audit), not from the
-# Management Account. The Management Account only registers the Delegated Admin and
+# IMPORTANT: Org-wide configurations (GuardDuty Org Config, Security Hub Org Config)
+# are managed from the Delegated Admin account (Audit), not from the Management
+# Account. The Management Account only registers the Delegated Admin and
 # enables the services locally. The org configuration is applied by
 # modules/security-org-config through a cross-account provider in the Audit account.
+#
+# The finding consumers (GuardDuty findings export, Macie classification
+# export, Security Hub finding aggregator and automation rules) reach the
+# member accounts' findings only in the delegated administrator, so
+# modules/security-org-config creates them in the Audit account and the
+# management stack passes manage_finding_consumers = false here. With the
+# default true this module creates them in the account of the provider passed
+# in — the Management Account in the shipped stacks — where they see that
+# account's own findings only.
 
 # --- Partition Detection ---
 data "aws_partition" "current" {}
@@ -55,12 +64,14 @@ check "audit_account_configured" {
 # becomes zero resources, and the plan looks complete. The check names what is
 # being skipped. A warning like audit_account_configured, not a precondition:
 # the stack's mock output for central_log_bucket_name is "" on a first plan
-# before the logging stack exists, and that plan must stay possible.
+# before the logging stack exists, and that plan must stay possible. The two
+# exports leave the list with manage_finding_consumers = false: they are then
+# the administrator's, not this account's.
 locals {
   central_log_bucket_consumers = compact([
-    var.enable_guardduty && var.guardduty_export_frequency != null ? "GuardDuty findings export (guardduty_export_frequency)" : "",
+    var.manage_finding_consumers && var.enable_guardduty && var.guardduty_export_frequency != null ? "GuardDuty findings export (guardduty_export_frequency)" : "",
     var.enable_guardduty && var.guardduty_export_frequency != null && (var.guardduty_lifecycle_rules != null || local.explicit_guardduty_export_lifecycle) ? "GuardDuty export lifecycle rules (guardduty_lifecycle_rules / guardduty_export_lifecycle_rules)" : "",
-    var.enable_macie && !local.is_eusc && var.macie_publish_sensitive_data_findings ? "Macie classification export (macie_publish_sensitive_data_findings)" : "",
+    var.manage_finding_consumers && var.enable_macie && !local.is_eusc && var.macie_publish_sensitive_data_findings ? "Macie classification export (macie_publish_sensitive_data_findings)" : "",
     var.enable_macie && !local.is_eusc && length(local.macie_export_lifecycle_rules) > 0 ? "Macie export lifecycle rules (macie_export_lifecycle_rules)" : "",
     var.enable_ssm_resource_data_sync ? "SSM resource data sync (enable_ssm_resource_data_sync)" : "",
   ])
@@ -70,6 +81,19 @@ check "central_log_bucket_configured" {
   assert {
     condition     = var.central_log_bucket_name != "" || length(local.central_log_bucket_consumers) == 0
     error_message = "central_log_bucket_name is empty, but features that write to the central log bucket are enabled and are SKIPPED in this plan — no resource is created for: ${join("; ", local.central_log_bucket_consumers)}. Wire the logging stack output (dependency.logging.outputs.central_log_bucket_name) or disable the features; a green apply without the bucket name archives nothing."
+  }
+}
+
+# --- Check: finding consumers kept here while an administrator is designated ---
+# The export of this account reaches this account's findings only; the
+# administrator's export (modules/security-org-config) reaches every member's.
+# A warning, not a failure: an operator may defer the move with
+# security_finding_consumers_in_audit = false, and a deployment without an
+# Audit account has no administrator to move them to.
+check "finding_consumers_in_administrator" {
+  assert {
+    condition     = !(var.manage_finding_consumers && var.audit_account_id != "" && var.enable_guardduty && var.guardduty_export_frequency != null && var.central_log_bucket_name != "")
+    error_message = "The GuardDuty findings export is created in this account while audit_account_id names a delegated administrator: it exports this account's findings only, the member accounts' findings reach no export. Leave security_finding_consumers_in_audit at its default so stacks/audit/security-org-config creates the export, the aggregator and the automation rules in the administrator."
   }
 }
 

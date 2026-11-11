@@ -55,8 +55,9 @@ locals {
   # one() keeps the expression valid while the bucket toggle is off; the
   # variable validation ties non-empty documents to the toggle.
   elb_log_bucket_base_policy = var.enable_elb_log_bucket ? jsondecode(templatefile("${path.module}/../../configurations/policies/logging/s3-elb-logs-bucket-policy.json", {
-    dns_suffix = local.dns_suffix
-    bucket_arn = one(aws_s3_bucket.elb_logs[*].arn)
+    dns_suffix      = local.dns_suffix
+    bucket_arn      = one(aws_s3_bucket.elb_logs[*].arn)
+    organization_id = var.organization_id
   })) : null
 
   elb_log_bucket_policy = var.enable_elb_log_bucket ? merge(local.elb_log_bucket_base_policy, {

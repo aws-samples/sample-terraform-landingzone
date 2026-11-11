@@ -9,11 +9,14 @@
 locals {
   arn_prefix = "arn:${var.partition}"
 
-  # The names a deployment target may use for this account: its name, its ID
-  # and the name of the OU it sits in.
+  # The names a deployment target may use for this account: its name, its ID,
+  # the name of the OU it sits in and the names of that OU's ancestors (an OU
+  # target reaches the accounts of its nested OUs, as an organization policy
+  # does).
   account_targets = concat(
     [var.account_name, var.account_id],
     [for name, id in var.ou_name_to_id : name if var.account_ou_id != "" && id == var.account_ou_id],
+    var.account_ou_names,
   )
 
   roles_map = {

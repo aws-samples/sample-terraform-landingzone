@@ -4,7 +4,7 @@ Creates EC2 compute building blocks — launch templates, auto-scaling groups wi
 
 The module reads no files and runs no scripts: user data is rendered with `templatestring()` from a template string and a placeholder map, SSM document content arrives as a configuration string, and there is no `local-exec`, no `remote-exec` and no `external` data source. Every AMI is a per-entry input with a format validation — no AMI is written into the module. `metadata_options.http_tokens` defaults to `"required"` (IMDSv2), deselectable per entry; deselecting it warns on every plan and apply, naming the templates, and fails `terraform test` — unless the template's name is on `imdsv1_acknowledged_launch_templates`, a deliberate, visible, per-template acknowledgement, never a blanket switch.
 
-Name references resolve against maps the stacks supply from their dependency outputs: subnets and security groups against the networking outputs (`subnet_ids`, `security_group_ids`), target groups against `target_group_arns`/`gwlb_target_group_arns`. An unknown name fails the plan with a message naming the entry — no silent fallback.
+Name references resolve against maps the stacks supply from their dependency outputs: subnets and security groups against the networking outputs (`subnet_ids`, `security_group_ids`), target groups against `target_group_arns`/`gwlb_target_group_arns`. An unknown name fails the plan with a message naming the entry — no silent fallback. A target group must belong to the account the module runs in: AWS attaches an auto-scaling group only to a target group of its own account, so the attachment compares the account of the resolved ARN against the caller and refuses a foreign one at plan. In a workload account the groups and target groups therefore come from `modules/workload-networking`, not from the management networking stack.
 
 ## Inputs
 
@@ -19,7 +19,7 @@ Name references resolve against maps the stacks supply from their dependency out
 | `ssm_associations` | SSM associations by name. Exactly one of `document_key` (an entry of `ssm_documents`) or `document_name` (an existing document, e.g. `AWS-JoinDirectoryServiceDomain`) names the document; the target is a list of `instance_keys` or a tag selector (`target_tag_key`, `target_tag_values`). Optional per entry: `parameters` and `schedule_expression` | `map(object)` | `{}` | no |
 | `subnet_ids` | Resolution map subnet name → subnet ID, supplied by the stack from the networking outputs (`subnet_ids`, keys `vpc_name.subnet_name`). Entries reference subnets by these names | `map(string)` | `{}` | no |
 | `security_group_ids` | Resolution map security group name → security group ID, supplied by the stack from the networking outputs (`security_group_ids`, keys `vpc_name.sg_name`) | `map(string)` | `{}` | no |
-| `target_group_arns` | Resolution map target group name → target group ARN, supplied by the stack from the networking outputs (`target_group_arns` and `gwlb_target_group_arns`) | `map(string)` | `{}` | no |
+| `target_group_arns` | Resolution map target group name → target group ARN, supplied by the stack from the networking outputs (`target_group_arns` and `gwlb_target_group_arns`; in a workload account the `target_group_arns` of `modules/workload-networking`). Every ARN must carry the account the module runs in — an auto-scaling group attaches only to a target group of its own account, and a foreign ARN is refused at plan | `map(string)` | `{}` | no |
 | `config_bucket_name` | Name of the configuration bucket (`modules/security`, `firewall_config_bucket_name` output). Available to every user-data template as the built-in placeholders `config_bucket` and `config_bucket_arn`; empty leaves both placeholders empty | `string` | `""` | no |
 | `default_tags` | Tags merged into every resource of the module | `map(string)` | `{}` | no |
 
@@ -94,7 +94,7 @@ module "firewall_appliances" {
 
 ### Workload compute (stacks/workload-dev/workload-compute)
 
-A workload fleet behind an application load balancer target group.
+A workload fleet behind an application load balancer target group. The fleet runs in the workload account, so its security groups and the target group come from `modules/workload-networking` in that account (`stacks/workload-dev/networking`); only the shared subnets are resolved through the management networking outputs.
 
 ```hcl
 module "workload_compute" {
@@ -126,9 +126,9 @@ module "workload_compute" {
     }
   }
 
-  subnet_ids         = module.networking.subnet_ids
-  security_group_ids = module.networking.security_group_ids
-  target_group_arns  = module.networking.target_group_arns
+  subnet_ids         = module.networking.subnet_ids                    # management networking: the shared subnets
+  security_group_ids = module.workload_networking.security_group_ids   # workload account
+  target_group_arns  = module.workload_networking.target_group_arns    # workload account
 }
 ```
 

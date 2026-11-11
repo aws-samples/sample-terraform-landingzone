@@ -271,3 +271,23 @@ def test_regression_operator_null_trusted_service_survives_the_aws_eusc_strip(tm
                 unit, kept, key, principals))
         print("trusted services pin (aws-eusc, null entry): %s.%s <- %s: %s" % (unit, MODULE_INPUT, key, principals))
     assert not problems, "\n".join(problems)
+
+
+def test_regression_macie_trusted_access_follows_the_security_switch(tmp_path):
+    """regression: Macie gained trusted access while the security stack was off.
+
+    Only management/security registers the Macie delegated administrator, and
+    that unit is excluded while ``enable_security`` is false. The organization
+    stack still added ``macie.<suffix>`` whenever the merged Macie switch was
+    on, an organization change nobody asked for.
+    """
+    root, _, env = _stage(tmp_path, [])
+    common = root / "env/common.hcl"
+    text = common.read_text()
+    assert re.search(r"^\s*enable_security\s*=\s*false\b", text, re.MULTILINE), "the example ships security off"
+    text, n = re.subn(r"^(\s*enable_macie\s*=\s*)false\b", r"\1true", text, flags=re.MULTILINE)
+    assert n == 1, "env/common.hcl.example: no single 'enable_macie = false' line to switch on"
+    common.write_text(text)
+    for unit, principals in _rendered_inputs(root, env).items():
+        macie = [p for p in principals if p and p.startswith("macie.")]
+        assert not macie, "%s: %s with enable_security = false: %r" % (unit, macie, principals)

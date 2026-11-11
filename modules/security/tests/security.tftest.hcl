@@ -526,10 +526,13 @@ run "custom_configuration_services" {
   # Only kms_key_arn of audit_manager_reports_destination reaches AWS; the
   # module reports the unsupported S3 destination part as a limitation.
   # enable_audit_manager = true additionally fires the maintenance-mode
-  # warning (new registrations refused by AWS since April 30, 2026).
+  # warning (new registrations refused by AWS since April 30, 2026). The
+  # export runs here beside a designated administrator, which the module
+  # reports as well.
   expect_failures = [
     check.audit_manager_reports_destination_provider_limitation,
     check.audit_manager_maintenance_mode,
+    check.finding_consumers_in_administrator,
   ]
 
   # --- GuardDuty feature toggles map onto detector feature status ---
@@ -1396,6 +1399,12 @@ run "regression_guardduty_export_prefix_reaches_destination" {
     condition     = one(aws_s3_bucket_lifecycle_configuration.guardduty_export[0].rule).filter[0].prefix == "findings/guardduty/"
     error_message = "The lifecycle rule must filter on the same prefix the export writes to."
   }
+
+  # The export runs here beside a designated administrator, which the module
+  # reports.
+  expect_failures = [
+    check.finding_consumers_in_administrator,
+  ]
 }
 
 # -----------------------------------------------------------------------------
@@ -1417,8 +1426,11 @@ run "regression_guardduty_export_without_kms_key_rejected" {
     guardduty_export_kms_key_arn = ""
   }
 
+  # The export is configured here beside a designated administrator; the
+  # module reports that too.
   expect_failures = [
     var.guardduty_export_kms_key_arn,
+    check.finding_consumers_in_administrator,
   ]
 }
 
@@ -1858,9 +1870,11 @@ run "regression_export_features_without_central_log_bucket_are_reported" {
   ]
 }
 
-# The same three features with the bucket name present raise no check: the
-# guard is about the empty name, not about the features.
-run "regression_export_features_with_central_log_bucket_stay_silent" {
+# The same three features with the bucket name present raise no bucket check:
+# the guard is about the empty name, not about the features. The one warning
+# left is the administrator one — the export runs here while audit_account_id
+# names a delegated administrator.
+run "regression_export_features_with_central_log_bucket_raise_no_bucket_guard" {
   command = plan
 
   variables {
@@ -1884,6 +1898,10 @@ run "regression_export_features_with_central_log_bucket_stay_silent" {
     ])
     error_message = "With central_log_bucket_name set all three export resources must be planned."
   }
+
+  expect_failures = [
+    check.finding_consumers_in_administrator,
+  ]
 }
 
 # -----------------------------------------------------------------------------
@@ -2342,9 +2360,11 @@ run "regression_security_lifecycle_defaults_keep_the_derived_plan" {
   }
 
   # enable_audit_manager = true fires the maintenance-mode warning (new
-  # registrations refused by AWS since April 30, 2026).
+  # registrations refused by AWS since April 30, 2026); the export runs here
+  # beside a designated administrator, which the module reports as well.
   expect_failures = [
     check.audit_manager_maintenance_mode,
+    check.finding_consumers_in_administrator,
   ]
 }
 # -----------------------------------------------------------------------------
@@ -2456,9 +2476,11 @@ run "security_lifecycle_rules_reach_the_resources" {
   }
 
   # enable_audit_manager = true fires the maintenance-mode warning (new
-  # registrations refused by AWS since April 30, 2026).
+  # registrations refused by AWS since April 30, 2026); the export runs here
+  # beside a designated administrator, which the module reports as well.
   expect_failures = [
     check.audit_manager_maintenance_mode,
+    check.finding_consumers_in_administrator,
   ]
 }
 # Macie rules alone have to create the central bucket resource — before the
@@ -2505,7 +2527,12 @@ run "regression_central_lifecycle_needs_the_replace_opt_in" {
     guardduty_export_kms_key_arn = "arn:aws:kms:eu-central-1:123456789012:key/11111111-2222-3333-4444-555555555555"
     guardduty_lifecycle_rules    = { retention_days = 90 }
   }
-  expect_failures = [var.replace_central_log_bucket_lifecycle]
+  # The export is configured here beside a designated administrator; the
+  # module reports that too.
+  expect_failures = [
+    var.replace_central_log_bucket_lifecycle,
+    check.finding_consumers_in_administrator,
+  ]
 }
 # -----------------------------------------------------------------------------
 # Validation — the checks on the rule shape, and the binding to each toggle
@@ -4276,4 +4303,212 @@ run "firewall_config_bucket_enabled_without_name_rejected" {
   }
 
   expect_failures = [var.firewall_config_bucket_name]
+}
+
+# -----------------------------------------------------------------------------
+# Scenario: finding consumers — where they run
+# -----------------------------------------------------------------------------
+# The GuardDuty export, the Macie export, the finding aggregator and the
+# automation rules reach the member accounts' findings only in the delegated
+# administrator (the Audit account, modules/security-org-config). The stack
+# switches them off here with manage_finding_consumers = false once they run
+# there; the default keeps every one of them in this account, as before.
+run "regression_finding_consumers_default_keeps_the_plan" {
+  command = plan
+
+  variables {
+    audit_account_id            = "222222222222"
+    root_credentials_management = false
+    allow_root_sessions         = false
+    central_log_bucket_name     = "tlz-central-logs"
+
+    guardduty_export_frequency           = "SIX_HOURS"
+    guardduty_export_kms_key_arn         = "arn:aws:kms:eu-central-1:123456789012:key/11111111-2222-3333-4444-555555555555"
+    guardduty_lifecycle_rules            = { retention_days = 90 }
+    replace_central_log_bucket_lifecycle = true
+
+    enable_macie                          = true
+    macie_publish_sensitive_data_findings = true
+
+    security_hub_standards = [
+      { arn_suffix = "aws-foundational-security-best-practices/v/1.0.0", enabled = true },
+    ]
+    security_hub_disabled_controls = [
+      {
+        standard_arn_suffix = "aws-foundational-security-best-practices/v/1.0.0"
+        control_ids         = ["IAM.1"]
+      }
+    ]
+    security_hub_automation_rules = [
+      {
+        rule_name   = "suppress-informational"
+        rule_order  = 10
+        description = "Suppress informational findings"
+        criteria = {
+          severity_label = [{ comparison = "EQUALS", value = "INFORMATIONAL" }]
+        }
+        actions = {
+          finding_fields_update = {
+            workflow = { status = "SUPPRESSED" }
+          }
+        }
+      },
+      {
+        rule_name   = "suppress-low"
+        rule_order  = 11
+        description = "Suppress low findings"
+        criteria = {
+          severity_label = [{ comparison = "EQUALS", value = "LOW" }]
+        }
+        actions = {
+          finding_fields_update = {
+            workflow = { status = "SUPPRESSED" }
+          }
+        }
+      },
+    ]
+  }
+
+  assert {
+    condition = alltrue([
+      length(time_sleep.guardduty_export_wait) == 1,
+      length(aws_guardduty_publishing_destination.this) == 1,
+      length(aws_macie2_classification_export_configuration.this) == 1,
+      length(aws_securityhub_finding_aggregator.this) == 1,
+      length(aws_securityhub_automation_rule.this) == 2,
+    ])
+    error_message = "With manage_finding_consumers at its default every finding consumer must be planned in this account, as before."
+  }
+
+  # ... and the module reports that they run here beside a designated
+  # administrator.
+  expect_failures = [
+    check.finding_consumers_in_administrator,
+  ]
+}
+
+run "finding_consumers_off_creates_none" {
+  command = plan
+
+  variables {
+    audit_account_id            = "222222222222"
+    root_credentials_management = false
+    allow_root_sessions         = false
+    central_log_bucket_name     = "tlz-central-logs"
+    manage_finding_consumers    = false
+
+    guardduty_export_frequency           = "SIX_HOURS"
+    guardduty_export_kms_key_arn         = "arn:aws:kms:eu-central-1:123456789012:key/11111111-2222-3333-4444-555555555555"
+    guardduty_lifecycle_rules            = { retention_days = 90 }
+    replace_central_log_bucket_lifecycle = true
+
+    enable_macie                          = true
+    macie_publish_sensitive_data_findings = true
+
+    security_hub_standards = [
+      { arn_suffix = "aws-foundational-security-best-practices/v/1.0.0", enabled = true },
+    ]
+    security_hub_disabled_controls = [
+      {
+        standard_arn_suffix = "aws-foundational-security-best-practices/v/1.0.0"
+        control_ids         = ["IAM.1"]
+      }
+    ]
+    security_hub_automation_rules = [
+      {
+        rule_name   = "suppress-informational"
+        rule_order  = 10
+        description = "Suppress informational findings"
+        criteria = {
+          severity_label = [{ comparison = "EQUALS", value = "INFORMATIONAL" }]
+        }
+        actions = {
+          finding_fields_update = {
+            workflow = { status = "SUPPRESSED" }
+          }
+        }
+      },
+      {
+        rule_name   = "suppress-low"
+        rule_order  = 11
+        description = "Suppress low findings"
+        criteria = {
+          severity_label = [{ comparison = "EQUALS", value = "LOW" }]
+        }
+        actions = {
+          finding_fields_update = {
+            workflow = { status = "SUPPRESSED" }
+          }
+        }
+      },
+    ]
+  }
+
+  assert {
+    condition = alltrue([
+      length(time_sleep.guardduty_export_wait) == 0,
+      length(aws_guardduty_publishing_destination.this) == 0,
+      length(aws_macie2_classification_export_configuration.this) == 0,
+      length(aws_securityhub_finding_aggregator.this) == 0,
+      length(aws_securityhub_automation_rule.this) == 0,
+    ])
+    error_message = "With manage_finding_consumers = false none of the five finding consumers may be planned in this account — they run in the administrator."
+  }
+
+  # Everything account-local stays: detector, Security Hub account, standards,
+  # disabled controls, Macie session, and the bucket-side lifecycle rule.
+  assert {
+    condition = alltrue([
+      length(aws_guardduty_detector.this) == 1,
+      length(aws_guardduty_organization_admin_account.this) == 1,
+      length(aws_securityhub_account.this) == 1,
+      length(aws_securityhub_standards_subscription.this) == 1,
+      length(aws_securityhub_standards_control.disabled) == 1,
+      length(aws_macie2_account.this) == 1,
+      length(aws_s3_bucket_lifecycle_configuration.guardduty_export) == 1,
+    ])
+    error_message = "manage_finding_consumers = false must leave the detector, Security Hub account, standards, disabled controls, Macie session and the export lifecycle rule in place."
+  }
+
+  # The export entries leave the central-bucket consumer list: the bucket name
+  # is set here, and with it empty the check would otherwise name features
+  # this account no longer writes.
+  assert {
+    condition     = !contains(local.central_log_bucket_consumers, "GuardDuty findings export (guardduty_export_frequency)") && !contains(local.central_log_bucket_consumers, "Macie classification export (macie_publish_sensitive_data_findings)")
+    error_message = "With manage_finding_consumers = false the central-bucket consumer list must not name the exports."
+  }
+}
+
+# Consumers kept here while an administrator is designated: every member
+# finding passes them by. A warning, not a failure — the operator may defer
+# the move with security_finding_consumers_in_audit = false.
+run "finding_consumers_beside_an_administrator_are_reported" {
+  command = plan
+
+  variables {
+    audit_account_id             = "222222222222"
+    root_credentials_management  = false
+    allow_root_sessions          = false
+    central_log_bucket_name      = "tlz-central-logs"
+    guardduty_export_frequency   = "SIX_HOURS"
+    guardduty_export_kms_key_arn = "arn:aws:kms:eu-central-1:123456789012:key/11111111-2222-3333-4444-555555555555"
+  }
+
+  expect_failures = [check.finding_consumers_in_administrator]
+}
+
+run "finding_consumers_without_an_administrator_stay_silent" {
+  command = plan
+
+  variables {
+    audit_account_id             = ""
+    root_credentials_management  = false
+    allow_root_sessions          = false
+    central_log_bucket_name      = "tlz-central-logs"
+    guardduty_export_frequency   = "SIX_HOURS"
+    guardduty_export_kms_key_arn = "arn:aws:kms:eu-central-1:123456789012:key/11111111-2222-3333-4444-555555555555"
+  }
+
+  # Only the empty-administrator warning fires, not the consumer one.
+  expect_failures = [check.audit_account_configured]
 }

@@ -99,6 +99,30 @@ run "regression_backup_role_reaches_the_member_account" {
   }
 }
 
+# regression: an account in an OU nested under a targeted OU got no role,
+# although the backup policy reaches it by inheritance.
+run "regression_nested_ou_member_gets_targeted_roles" {
+  command = plan
+
+  variables {
+    account_name     = "Workload-Prod"
+    account_id       = "444444444444"
+    account_ou_id    = "ou-abcd-prod"
+    account_ou_names = ["Prod", "Workloads"]
+    ou_name_to_id = {
+      Workloads      = "ou-abcd-workload"
+      Prod           = "ou-abcd-prod"
+      Infrastructure = "ou-abcd-infra"
+      Security       = "ou-abcd-security"
+    }
+  }
+
+  assert {
+    condition     = toset(keys(aws_iam_role.this)) == toset(["Backup-Role", "EC2-Default-SSM-Role"])
+    error_message = "A role targeting an OU must reach the accounts of the OUs nested under it."
+  }
+}
+
 run "untargeted_account_gets_nothing" {
   command = plan
 

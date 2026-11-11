@@ -31,12 +31,14 @@ locals {
     "ORACLE-RDS"   = 1521
   }
 
-  # Flattened rules before type expansion: "vpc_name.sg_name.direction.idx"
-  # → { sg_key, vpc_name, direction, rule }.
+  # Flattened rules before type expansion: "vpc_name.sg_name.direction.<name
+  # or idx>" → { sg_key, vpc_name, direction, rule }. A rule's optional name
+  # replaces its list index in the key, so removing or reordering other rules
+  # leaves a named rule in place; an unnamed rule keeps the index key.
   sg_rules_raw = merge([
     for sg_key, sg in local.security_group_map : merge(
       {
-        for idx, rule in sg.ingress : "${sg_key}.ingress.${idx}" => {
+        for idx, rule in sg.ingress : "${sg_key}.ingress.${rule.name != null ? rule.name : idx}" => {
           sg_key    = sg_key
           vpc_name  = sg.vpc_name
           direction = "ingress"
@@ -44,7 +46,7 @@ locals {
         }
       },
       {
-        for idx, rule in sg.egress : "${sg_key}.egress.${idx}" => {
+        for idx, rule in sg.egress : "${sg_key}.egress.${rule.name != null ? rule.name : idx}" => {
           sg_key    = sg_key
           vpc_name  = sg.vpc_name
           direction = "egress"
@@ -98,10 +100,10 @@ locals {
     }
   ]...)
 
-  # Flattened ingress rules: "vpc_name.sg_name.ingress.idx[.type]" → rule
+  # Flattened ingress rules: "vpc_name.sg_name.ingress.<name or idx>[.type]" → rule
   sg_ingress_rules = { for key, rule in local.sg_rules : key => rule if rule.direction == "ingress" }
 
-  # Flattened egress rules: "vpc_name.sg_name.egress.idx[.type]" → rule
+  # Flattened egress rules: "vpc_name.sg_name.egress.<name or idx>[.type]" → rule
   sg_egress_rules = { for key, rule in local.sg_rules : key => rule if rule.direction == "egress" }
 }
 

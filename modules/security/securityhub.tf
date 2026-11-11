@@ -154,7 +154,7 @@ resource "aws_securityhub_standards_control" "disabled" {
 # =============================================================================
 
 resource "aws_securityhub_finding_aggregator" "this" {
-  count             = var.enable_security_hub && var.enable_security_hub_region_aggregation ? 1 : 0
+  count             = var.manage_finding_consumers && var.enable_security_hub && var.enable_security_hub_region_aggregation ? 1 : 0
   linking_mode      = length(var.security_hub_aggregation_regions) > 0 ? "SPECIFIED_REGIONS" : "ALL_REGIONS"
   specified_regions = length(var.security_hub_aggregation_regions) > 0 ? var.security_hub_aggregation_regions : null
 
@@ -165,11 +165,18 @@ resource "aws_securityhub_finding_aggregator" "this" {
 # Security Hub Automation Rules
 # =============================================================================
 
+locals {
+  # Gate of the automation rules: the finding consumers of this account. The
+  # resource block below reads the local so that it stays identical to its copy
+  # in modules/security-org-config (tests/test_regression_automation_rule_block_identical.py).
+  manage_security_hub_automation_rules = var.manage_finding_consumers && var.enable_security_hub
+}
+
 resource "aws_securityhub_automation_rule" "this" {
   # A rule whose exclude_regions list names the current region is not created
   # in this deployment — the per-rule counterpart to the module-wide region
   # exclusion lists.
-  for_each = var.enable_security_hub ? {
+  for_each = local.manage_security_hub_automation_rules ? {
     for r in var.security_hub_automation_rules : r.rule_name => r
     if !contains(r.exclude_regions, local.region)
   } : {}

@@ -192,3 +192,8 @@ modules/*/.livetest/
 # only env/massprov.json.example with a placeholder scheme is versioned.
 env/massprov.json
 env/massprov/
+
+# The real AWS account number for a session's credentials; only aws.env.example is versioned.
+aws.env
+aws.env.*
+!aws.env.example

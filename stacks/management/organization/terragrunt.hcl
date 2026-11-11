@@ -73,12 +73,18 @@ inputs = {
   enable_quarantine_auto_detach  = local.compliance.locals.enable_quarantine_auto_detach
   opt_in_regions                 = try(local.common.locals.opt_in_regions, [])
 
+  # Principals whose SCP changes the auto-revert function leaves alone.
+  scp_revert_exempt_principal_arns = try(local.common.locals.scp_revert_exempt_principal_arns, [])
+
   # Quarantine SCP: content and targets come from env/common.hcl through the
   # loader. The module fallback reads the same document
   # (tlz-quarantine-guardrails.json), so both paths exempt the tlz-*
   # provisioning roles alongside AWSControlTowerExecution.
   quarantine_scp_content = local.compliance.locals.common_quarantine_scp_content
   quarantine_scp_targets = try(local.common.locals.quarantine_scp.targets, [])
+  # OU the quarantine SCP is attached to and that the accounts unit creates
+  # accounts marked quarantined = true inside; empty uses the targets only.
+  quarantine_ou_name = try(local.common.locals.quarantine_ou_name, "")
 
   # Pipeline SCP: attached to the Infrastructure OU, whose ID this module
   # creates itself — no dependency can supply it, and AWS Organizations rejects
@@ -128,8 +134,9 @@ inputs = {
     # registration, like enable_central_root_management below. A raw
     # env/common.hcl read would let trusted access and registration disagree:
     # RegisterDelegatedAdministrator fails with ConstraintViolationException
-    # when macie.<suffix> is missing here.
-    local.compliance.locals.filtered_enable_macie ? "macie.${local.suffix}" : "",
+    # when macie.<suffix> is missing here. The security stack is skipped
+    # while enable_security is false, so nothing registers Macie then.
+    try(local.common.locals.enable_security, false) && local.compliance.locals.filtered_enable_macie ? "macie.${local.suffix}" : "",
     try(local.common.locals.enable_security, false) && try(local.common.locals.enable_detective, false) ? "detective.${local.suffix}" : "",
     try(local.common.locals.enable_security, false) && try(local.common.locals.enable_audit_manager, false) ? "auditmanager.${local.suffix}" : "",
     # Central root user management: iam.<suffix> as service access principal

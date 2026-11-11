@@ -97,7 +97,7 @@
       "Resource": "${bucket_arn}/${guardduty_export_prefix}*",
       "Condition": {
         "StringEquals": {
-          "aws:SourceAccount": "${account_id}"
+          "aws:SourceAccount": ${export_source_accounts_json}
         }
       }
     },
@@ -111,7 +111,7 @@
       "Resource": "${bucket_arn}",
       "Condition": {
         "StringEquals": {
-          "aws:SourceAccount": "${account_id}"
+          "aws:SourceAccount": ${export_source_accounts_json}
         }
       }
     },
@@ -125,7 +125,7 @@
       "Resource": "${bucket_arn}/macie/*",
       "Condition": {
         "StringEquals": {
-          "aws:SourceAccount": "${account_id}"
+          "aws:SourceAccount": ${export_source_accounts_json}
         }
       }
     },

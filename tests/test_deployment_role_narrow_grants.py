@@ -106,6 +106,10 @@ NEEDS = {
                                         "securityhub:BatchDeleteAutomationRules",
                                         "securityhub:ListTagsForResource", "securityhub:TagResource",
                                         "securityhub:UntagResource"],
+    # modules/security-org-config/consumers.tf: the member enrolment of the
+    # administrator; the provider disassociates before it deletes.
+    "aws_securityhub_member": ["securityhub:CreateMembers", "securityhub:GetMembers",
+                               "securityhub:DisassociateMembers", "securityhub:DeleteMembers"],
     # modules/security/macie.tf, modules/security-org-config/main.tf
     "aws_macie2_account": ["macie2:EnableMacie", "macie2:GetMacieSession", "macie2:UpdateMacieSession",
                            "macie2:DisableMacie"],

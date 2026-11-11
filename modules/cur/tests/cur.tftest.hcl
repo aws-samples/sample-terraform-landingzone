@@ -505,6 +505,24 @@ run "empty_s3_bucket_name_rejected" {
   expect_failures = [var.s3_bucket_name]
 }
 
+# regression: the dedicated bucket needs no external bucket name. The
+# management cur stack passes "" so that it does not depend on the logging
+# stack, whose outputs do not exist while logging is switched off.
+run "regression_dedicated_bucket_accepts_empty_s3_bucket_name" {
+  command = plan
+
+  variables {
+    enable_cost_and_usage_report = true
+    enable_dedicated_bucket      = true
+    s3_bucket_name               = ""
+  }
+
+  assert {
+    condition     = length(aws_s3_bucket.cur) == 1 && length(aws_cur_report_definition.this) == 1
+    error_message = "With the dedicated bucket an empty s3_bucket_name must plan the bucket and the report."
+  }
+}
+
 run "invalid_s3_bucket_region_rejected" {
   command = plan
 

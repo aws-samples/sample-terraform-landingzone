@@ -29,7 +29,7 @@ locals {
   # separate quotas and stay out of this count.
   managed_scp_attachment_targets = concat(
     [for att in local.scp_attachments : att.target],
-    var.enable_quarantine_scp ? var.quarantine_scp_targets : [],
+    var.enable_quarantine_scp ? local.quarantine_scp_attachment_targets : [],
     var.enable_pipeline_scp && var.pipeline_scp_config != null ? [var.pipeline_scp_config.infrastructure_ou_id] : [],
   )
 

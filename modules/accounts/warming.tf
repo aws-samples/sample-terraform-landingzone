@@ -18,7 +18,7 @@
 # (throwaway VPC + subnet, small instance from the current AL2023 AMI
 # parameter of the target partition, ISO-8601 warm duration, removal of
 # everything it created, pre-warmed flag under <SsmPrefix>/account/pre-warmed
-# set to true only at the successful end — a run that fails midway aborts
+# set to true only at the successful end — a run that fails partway aborts
 # and leaves the flag false), shared to every warm-marked account. The one
 # step that stays operational by nature is STARTING the run — once per new
 # account, in that account (README, section Account warming).

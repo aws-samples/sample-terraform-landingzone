@@ -97,6 +97,17 @@ generate "versions" {
 
 terraform {
   source = "${get_repo_root()}//modules/bootstrap"
+
+  # Refuses a DIRECT `terragrunt plan`/`init`/`apply` here while the deployment
+  # account is off or the backend is not "s3": such a call would assume a role
+  # in an account this deployment does not use, or create a bucket no unit's
+  # backend points at. A hook, not a file()-abort local, for the reason given
+  # in stacks/management/bootstrap: `exclude` protects `run --all` only, and a
+  # local is evaluated before `exclude` applies.
+  before_hook "refuse_without_deployment_account" {
+    commands = ["init", "plan", "apply", "destroy", "import", "validate", "refresh", "test"]
+    execute  = local.common.locals.enable_deployment_account && local.common.locals.state_backend == "s3" ? ["true"] : ["sh", "-c", "echo 'ERROR: stacks/deployment/bootstrap creates the state bucket and the lock table in the deployment account for enable_deployment_account = true with state_backend = \"s3\", but env/common.hcl sets another configuration. With the deployment account off, stacks/management/bootstrap is the state backend of this deployment.' >&2; exit 1"]
+  }
 }
 
 inputs = {

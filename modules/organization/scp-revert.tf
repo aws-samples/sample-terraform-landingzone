@@ -87,7 +87,8 @@ locals {
   enable_scp_auto_revert = var.enable_scp_revert_detection && var.enable_scp_auto_revert
 
   # The content this module deployed, by policy ID: what an UpdatePolicy
-  # revert restores. Packaged next to the code as known_good_policies.json,
+  # revert restores, and the policies a DetachPolicy revert re-attaches.
+  # Packaged next to the code as known_good_policies.json,
   # so the function always carries the content of the last apply.
   scp_auto_revert_known_good = merge(
     { for p in aws_organizations_policy.scp : p.id => p.content },
@@ -133,6 +134,10 @@ KNOWN_GOOD_FILE = os.path.join(
 organizations = boto3.client("organizations")
 
 
+def _env_list(name):
+    return json.loads(os.environ.get(name, "[]"))
+
+
 def _known_good():
     with open(KNOWN_GOOD_FILE, encoding="utf-8") as handle:
         return json.load(handle)
@@ -165,6 +170,12 @@ def lambda_handler(event, context):
     caller_arn = session_issuer_arn if session_issuer_arn else principal_arn
 
     logger.info("Event: %s, Caller ARN: %s", event_name, caller_arn)
+
+    # Principals the operator exempts by exact ARN (the role ARN for an
+    # assumed role), such as the operator's own role on the default path.
+    if caller_arn and caller_arn in _env_list("SCP_REVERT_EXEMPT_ARNS"):
+        logger.info("Caller %s is an exempt principal — skipping revert.", caller_arn)
+        return {"statusCode": 200, "body": "Skipped: exempt principal"}
 
     # Check if the caller matches any exclusion pattern
     for pattern in EXCLUSION_PATTERNS:
@@ -213,6 +224,16 @@ def lambda_handler(event, context):
             if not target_id:
                 return _not_reverted(
                     "DetachPolicy for %s carries no targetId." % policy_id
+                )
+            # The quarantine SCP is released by detaching it by hand.
+            if policy_id in _env_list("SCP_REVERT_QUARANTINE_POLICY_IDS"):
+                return _not_reverted(
+                    "policy %s is the quarantine SCP; its release is manual." % policy_id
+                )
+            if policy_id not in _known_good():
+                return _not_reverted(
+                    "policy %s is not managed by this landing zone; "
+                    "review the change by hand." % policy_id
                 )
             logger.info(
                 "Re-attaching policy %s to target %s", policy_id, target_id
@@ -306,6 +327,13 @@ resource "aws_lambda_function" "scp_auto_revert" {
 
   dead_letter_config {
     target_arn = aws_sqs_queue.scp_auto_revert_dlq[0].arn
+  }
+
+  environment {
+    variables = {
+      SCP_REVERT_EXEMPT_ARNS           = jsonencode(var.scp_revert_exempt_principal_arns)
+      SCP_REVERT_QUARANTINE_POLICY_IDS = jsonencode([for p in aws_organizations_policy.quarantine : p.id])
+    }
   }
 
   lifecycle {

@@ -135,6 +135,46 @@
         "kms:DescribeKey"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "AllowMacieEncrypt",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "macie.${dns_suffix}"
+      },
+      "Action": [
+        "kms:GenerateDataKey",
+        "kms:Encrypt"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceAccount": ${export_source_accounts_json}
+        },
+        "ArnLike": {
+          "aws:SourceArn": ${macie_export_source_arns_json}
+        }
+      }
+    },
+    {
+      "Sid": "AllowCloudTrailEncryptEventDataStore",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "cloudtrail.${dns_suffix}"
+      },
+      "Action": [
+        "kms:GenerateDataKey",
+        "kms:Decrypt"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceAccount": "${account_id}"
+        },
+        "ArnLike": {
+          "aws:SourceArn": "${arn_prefix}:cloudtrail:${region}:${account_id}:eventdatastore/*"
+        }
+      }
     }
   ]
 }

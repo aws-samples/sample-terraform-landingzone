@@ -19,7 +19,8 @@ stay unchanged:
    `env/common.hcl` (`accounts[].organizational_unit_name`) joined with the
    recorded IDs in `env/accounts.hcl` (`workload_accounts`). Nested OUs roll
    up to their ancestors: an account in `Dev` is also a member of
-   `Workloads`. Per entry the effective account set is
+   `Workloads`. An account declared in an OU marked `ignore = true` (or
+   below one) joins no membership. Per entry the effective account set is
    `distinct(union(OU members, accounts)) minus excluded_accounts`.
 3. **Generator stacks** — `stacks/management/ou-deployment/<capability>/`
    generates, per resolved account, an `aws` provider alias that assumes the
@@ -81,7 +82,8 @@ There are no silent fallbacks:
 
 At plan time a `lifecycle` precondition aborts the run when a resolved
 account ID is not among the active account IDs of the accounts unit — warm
-accounts stay excluded from deployment targets. Before the first accounts
+or suspended accounts (declared in an OU marked `ignore = true`) stay excluded
+from deployment targets. Before the first accounts
 apply the outputs are mocked; the mock carries a sentinel key, and only that
 mock lets the precondition pass, so bootstrap validate/plan keeps working. A
 real, empty set of active accounts (every account warm, or targets the

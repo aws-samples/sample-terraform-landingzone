@@ -2,16 +2,19 @@
 # Uses external ou_name_to_id map (from Organization module) when available,
 # falls back to data-source-based resolution for standalone usage.
 
-# Fallback: resolve Organization Root ID via data source when not passed
+# Fallback: resolve Organization Root ID via data source when not passed.
+# Neither data source is read while var.ou_name_to_id is supplied: the map
+# alone resolves every OU name.
 data "aws_organizations_organization" "current" {
-  count = var.organization_root_id == "" ? 1 : 0
+  count = var.organization_root_id == "" && length(var.ou_name_to_id) == 0 ? 1 : 0
 }
 
 locals {
-  resolved_root_id = var.organization_root_id != "" ? var.organization_root_id : data.aws_organizations_organization.current[0].roots[0].id
+  resolved_root_id = var.organization_root_id != "" ? var.organization_root_id : try(data.aws_organizations_organization.current[0].roots[0].id, "")
 }
 
 data "aws_organizations_organizational_units" "root" {
+  count     = length(var.ou_name_to_id) == 0 ? 1 : 0
   parent_id = local.resolved_root_id
 }
 
@@ -22,7 +25,7 @@ locals {
   # level 1 requires var.ou_name_to_id (supplied by the organization module,
   # which keys all levels by their simple name).
   data_source_ou_map = {
-    for ou in data.aws_organizations_organizational_units.root.children :
+    for ou in try(data.aws_organizations_organizational_units.root[0].children, []) :
     ou.name => ou.id
   }
   ou_name_to_id = length(var.ou_name_to_id) > 0 ? var.ou_name_to_id : local.data_source_ou_map
@@ -80,6 +83,16 @@ locals {
     for acct in local.resolved_accounts : acct.name
     if try(acct.warm, false)
   ] : []
+
+  # Names of the accounts declared in an ignored OU (the organization module's
+  # ignored_ou_ids: ignore = true, or below such an OU). Read from the DECLARED
+  # OU, which is known at plan time; a console move is a drift the plan shows.
+  # These accounts stay declared and created, but leave the active_* outputs,
+  # so no downstream stack assumes a role in them.
+  suspended_account_names = [
+    for acct in local.resolved_accounts : acct.name
+    if acct.target_ou_id != null && contains(var.ignored_ou_ids, acct.target_ou_id)
+  ]
 }
 
 # Account creation with API throttling protection.
@@ -106,7 +119,9 @@ resource "aws_organizations_account" "this" {
   role_name                  = local.created_account_role_name
   iam_user_access_to_billing = each.value.iam_user_access_to_billing
   close_on_deletion          = var.close_on_deletion
-  parent_id                  = each.value.target_ou_id
+  # A quarantined account is created inside the quarantine OU, where the
+  # quarantine SCP already applies; its declared OU stays its deployment scope.
+  parent_id = each.value.quarantined ? var.quarantine_ou_id : each.value.target_ou_id
 
   tags = merge(
     var.default_tags,
@@ -124,6 +139,13 @@ resource "aws_organizations_account" "this" {
     precondition {
       condition     = length(local.unresolvable_ou_paths) == 0
       error_message = "Unresolvable target OU for accounts [${join(", ", local.unresolvable_ou_paths)}]. The OU name (or the leaf segment of a path like 'Parent/Child') must exist as a key in ou_name_to_id. Without ou_name_to_id only the direct children of the organization root are resolvable, so nested OUs require the map from the organization module. Known keys: [${join(", ", sort(keys(local.ou_name_to_id)))}]."
+    }
+
+    # A quarantined account needs the quarantine OU; without it parent_id
+    # would be "" and AWS would refuse or, worse, place the account elsewhere.
+    precondition {
+      condition     = !each.value.quarantined || var.quarantine_ou_id != ""
+      error_message = "quarantined = true on ${each.value.name} but no quarantine OU: set quarantine_ou_name with enable_quarantine_scp = true in the organization configuration, or remove the flag."
     }
   }
 }
@@ -184,6 +206,22 @@ check "warm_flags_without_toggle" {
       "[${join(", ", [for a in var.accounts : a.name if a.warm])}].",
       "These accounts receive the full security and networking configuration.",
       "Set enable_account_warming = true to activate the warm exclusion, or remove the warm flags.",
+    ])
+  }
+}
+
+# --- Suspended Account Notice ---
+# An account declared in an ignored OU is out of every fan-out; the plan names
+# it so that a declaration moved there by mistake does not go unnoticed.
+
+check "suspended_accounts_named" {
+  assert {
+    condition = length(local.suspended_account_names) == 0
+    error_message = join(" ", [
+      "Suspended accounts: [${join(", ", local.suspended_account_names)}].",
+      "These accounts are declared in an OU marked ignore = true (or below one) and are no deployment targets:",
+      "no downstream stack configures them, and resources they still hold stay as they are.",
+      "To bring an account back, declare it in a working OU and apply the accounts unit.",
     ])
   }
 }
@@ -307,4 +345,48 @@ resource "aws_iam_account_alias" "management" {
   count = var.management_account_alias != "" ? 1 : 0
 
   account_alias = var.management_account_alias
+}
+
+# --- Quarantine OU ---
+# An account declared with quarantined = true is created inside the quarantine
+# OU, under the quarantine SCP, and configured by the fan-out through the
+# exempt access role. Both lists are known at plan time, so the checks below
+# read in the very plan that creates the account.
+
+locals {
+  quarantined_account_names = [
+    for acct in local.resolved_accounts : acct.name
+    if acct.quarantined
+  ]
+
+  # Role names the built-in quarantine SCP document exempts; every other
+  # principal in a quarantined account is denied every action.
+  quarantine_exempt_role_pattern = "^(AWSControlTowerExecution|TLZDeploymentRole|tlz-.*|OrganizationAccountAccessRole)$"
+
+  quarantine_non_exempt_roles = [
+    for role in distinct([var.account_access_role_name, local.created_account_role_name]) : role
+    if !can(regex(local.quarantine_exempt_role_pattern, role))
+  ]
+}
+
+check "quarantined_accounts_named" {
+  assert {
+    condition = length(local.quarantined_account_names) == 0
+    error_message = join(" ", [
+      "Quarantined accounts: [${join(", ", local.quarantined_account_names)}].",
+      "They are created inside the quarantine OU, where the quarantine SCP denies every action to every principal except the exempt access roles.",
+      "To release an account, set quarantined = false on its entry and apply this unit, which moves it to its declared OU.",
+    ])
+  }
+}
+
+check "quarantine_exempts_access_roles" {
+  assert {
+    condition = length(local.quarantined_account_names) == 0 || length(local.quarantine_non_exempt_roles) == 0
+    error_message = join(" ", [
+      "Quarantined accounts [${join(", ", local.quarantined_account_names)}] are reached through roles the built-in quarantine SCP does not exempt: [${join(", ", local.quarantine_non_exempt_roles)}].",
+      "The document exempts AWSControlTowerExecution, TLZDeploymentRole, tlz-* and OrganizationAccountAccessRole; every other principal is denied every action, so the fan-out would fail in these accounts.",
+      "Use an exempt role name, or exempt the role in a custom quarantine_scp_content.",
+    ])
+  }
 }

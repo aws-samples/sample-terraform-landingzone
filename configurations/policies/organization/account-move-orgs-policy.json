@@ -4,7 +4,6 @@
     {
       "Effect": "Allow",
       "Action": [
-        "organizations:MoveAccount",
         "organizations:DescribeAccount",
         "organizations:ListParents"
       ],

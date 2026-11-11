@@ -1,4 +1,4 @@
-# Config Recorder im Workload-Dev-Account (Cross-Account)
+# Config Recorder in Workload-Dev Account (Cross-Account)
 # Template for additional workload accounts (workload-staging, workload-prod)
 # Copy directory and adjust account name in SSM path
 
@@ -14,10 +14,14 @@ locals {
   # sits in cross_account.hcl so that root.hcl and this file read the same value.
   cross_account = read_terragrunt_config("${get_terragrunt_dir()}/cross_account.hcl")
   account_id    = local.cross_account.locals.account_id
+
+  # Read for the exclude condition: management/logging is skipped while
+  # enable_logging is false and then has no outputs to read on apply.
+  common = read_terragrunt_config(find_in_parent_folders("env/common.hcl"))
 }
 
 exclude {
-  if      = local.account_id == ""
+  if      = local.account_id == "" || !local.common.locals.enable_logging
   actions = ["all"]
 }
 

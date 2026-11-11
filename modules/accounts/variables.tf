@@ -29,6 +29,10 @@ variable "accounts" {
     # 3. Promotion: set warm = false to include account in all downstream modules
     # 4. Cold state: account has full security, networking, and compliance config
     warm = optional(bool, false)
+    # Quarantine: the account is created inside the quarantine OU
+    # (var.quarantine_ou_id) instead of its declared OU, which stays its
+    # deployment scope. Release: quarantined = false moves it to the declared OU.
+    quarantined = optional(bool, false)
   }))
 
   validation {
@@ -65,6 +69,20 @@ variable "ou_name_to_id" {
       can(regex("^ou-[a-z0-9]+-[a-z0-9]+$", id))
     ])
     error_message = "Each OU ID must match the format ou-xxxx-xxxxxxxx."
+  }
+}
+
+variable "ignored_ou_ids" {
+  description = "IDs of the OUs the organization module reports as ignored (ignore = true, or below such an OU). An account declared in one of them is suspended: still created and listed by account_ids, but left out of active_account_ids and active_account_ou_ids, so no downstream stack configures it."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for id in var.ignored_ou_ids :
+      can(regex("^ou-[a-z0-9]+-[a-z0-9]+$", id))
+    ])
+    error_message = "Each ignored_ou_ids entry must match the format ou-xxxx-xxxxxxxx."
   }
 }
 
@@ -225,6 +243,12 @@ variable "region" {
   }
 }
 
+variable "aws_profile" {
+  description = "Local AWS CLI profile for the deployment provider alias; empty uses the default credential chain"
+  type        = string
+  default     = ""
+}
+
 # --- Identity Center Permission Sets (G6) ---
 
 variable "identity_center_permission_sets" {
@@ -291,3 +315,16 @@ variable "account_ids" {
   default     = {}
 }
 
+
+# --- Quarantine OU ---
+
+variable "quarantine_ou_id" {
+  description = "ID of the quarantine OU (output quarantine_ou_id of the organization module). An account with quarantined = true is created inside it instead of its declared OU and moved to the declared OU when the flag is set to false. Empty refuses any quarantined account at plan time."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.quarantine_ou_id == "" || can(regex("^ou-[a-z0-9]+-[a-z0-9]+$", var.quarantine_ou_id))
+    error_message = "quarantine_ou_id must be empty or match the format ou-xxxx-xxxxxxxx."
+  }
+}

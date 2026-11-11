@@ -56,6 +56,63 @@ resource "aws_route53_resolver_rule" "this" {
   }
 }
 
+locals {
+  # A forwarding rule takes effect only in the VPCs it is associated with. A
+  # zone-scoped rule is associated with the VPCs its zone is attached to:
+  # the zone's vpc_ids when given, every VPC of the module otherwise.
+  # "<zone>-<domain>.<vpc name or vpc id>" → { rule_key, vpc_name, vpc_id, domain }
+  zone_resolver_rule_vpc_map = merge(flatten([
+    for zone in var.route53_zones : [
+      for rule in zone.resolver_rules : length(zone.vpc_ids) > 0 ? {
+        for vpc_id in zone.vpc_ids : "${zone.name}-${rule.domain_name}.${vpc_id}" => {
+          rule_key = "${zone.name}-${rule.domain_name}"
+          vpc_name = null
+          vpc_id   = vpc_id
+          domain   = trimsuffix(lower(rule.domain_name), ".")
+        }
+        } : {
+        for vpc_name in keys(local.vpc_map) : "${zone.name}-${rule.domain_name}.${vpc_name}" => {
+          rule_key = "${zone.name}-${rule.domain_name}"
+          vpc_name = vpc_name
+          vpc_id   = null
+          domain   = trimsuffix(lower(rule.domain_name), ".")
+        }
+      }
+    ]
+  ])...)
+
+  # "<vpc name>|<domain>" of every zone-scoped rule association that also
+  # carries an endpoint or standalone rule for the same domain.
+  zone_resolver_rule_domain_conflicts = setintersection(
+    toset([for a in values(local.zone_resolver_rule_vpc_map) : "${a.vpc_name}|${a.domain}" if a.vpc_name != null]),
+    toset(concat(
+      [for a in values(local.resolver_endpoint_rule_vpc_map) : "${a.vpc_name}|${trimsuffix(lower(local.resolver_endpoint_rule_map[a.rule_key].domain_name), ".")}"],
+      [for a in values(local.standalone_resolver_rule_vpc_map) : "${a.vpc_name}|${trimsuffix(lower(local.standalone_resolver_rule_map[a.rule_name].domain_name), ".")}"],
+    )),
+  )
+}
+
+resource "aws_route53_resolver_rule_association" "zone" {
+  for_each = local.zone_resolver_rule_vpc_map
+
+  resolver_rule_id = aws_route53_resolver_rule.this[each.value.rule_key].id
+  vpc_id           = each.value.vpc_name != null ? aws_vpc.this[each.value.vpc_name].id : each.value.vpc_id
+
+  # Association names accept letters, digits, hyphens and underscores — the map
+  # key carries dots as separators
+  name = replace(each.key, ".", "-")
+}
+
+# Route 53 Resolver keeps one forwarding rule per domain name and VPC, so a
+# second rule for the same domain in the same VPC is expected to be refused
+# when it is associated.
+check "zone_resolver_rule_domain_once_per_vpc" {
+  assert {
+    condition     = length(local.zone_resolver_rule_domain_conflicts) == 0
+    error_message = "route53_zones resolver_rules forward a domain that a resolver_endpoints or resolver_rules entry already forwards in the same VPC: [${join(", ", sort(local.zone_resolver_rule_domain_conflicts))}] (<vpc>|<domain>). Route 53 Resolver keeps one forwarding rule per domain and VPC; keep one of the two rules for that VPC."
+  }
+}
+
 # =============================================================================
 # Route53 DNS Firewall
 # =============================================================================
@@ -83,15 +140,25 @@ locals {
     }
   ]...)
 
-  # Flattened associations: "group_name.vpc_name" → { group_name, vpc_name }
+  # Flattened associations: "group_name.vpc_name" → { group_name, vpc_name, priority }
   dns_firewall_association_map = merge([
-    for rg in var.dns_firewall_rule_groups : {
+    for group_index, rg in var.dns_firewall_rule_groups : {
       for vpc_name in rg.vpc_names : "${rg.name}.${vpc_name}" => {
         group_name = rg.name
         vpc_name   = vpc_name
         # Mutation protection is a property of this one association; a VPC
         # without an entry keeps the service default (DISABLED).
         mutation_protection = lookup(rg.mutation_protection, vpc_name, null)
+        # Route 53 needs a unique priority per rule group on one VPC. The
+        # position in vpc_names sets the base (100 + position, as before);
+        # every earlier group on the same VPC adds 100, so two groups on one
+        # VPC never meet.
+        # shortcut: unique while a vpc_names list has fewer than 100 entries;
+        # derive the step from the longest list when one grows past that.
+        priority = 100 + index(rg.vpc_names, vpc_name) + 100 * length([
+          for earlier in slice(var.dns_firewall_rule_groups, 0, group_index) : earlier.name
+          if contains(earlier.vpc_names, vpc_name)
+        ])
       }
     }
   ]...)
@@ -163,7 +230,7 @@ resource "aws_route53_resolver_firewall_rule_group_association" "this" {
   name                   = "${each.value.group_name}-${each.value.vpc_name}"
   firewall_rule_group_id = aws_route53_resolver_firewall_rule_group.this[each.value.group_name].id
   vpc_id                 = aws_vpc.this[each.value.vpc_name].id
-  priority               = 100 + index(var.dns_firewall_rule_groups[index(var.dns_firewall_rule_groups.*.name, each.value.group_name)].vpc_names, each.value.vpc_name)
+  priority               = each.value.priority
 
   # ENABLED locks this one association against modification and removal until
   # it is switched off again; null leaves the service default (DISABLED)

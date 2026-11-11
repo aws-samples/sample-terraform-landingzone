@@ -19,7 +19,7 @@ Every resource, the central log bucket included, is created in the account of th
 | `cloudtrail_lambda_data_events` | Record Lambda data events in the organization trail | `bool` | `true` | no |
 | `cloudtrail_insights` | Insight types to enable on the trail: `ApiCallRateInsight`, `ApiErrorRateInsight` | `list(string)` | `[]` | no |
 | `s3_lifecycle_rules` | Retention per prefix (`cloudtrail/`, `config/`, `s3-access-logs/`) on the central bucket. `null` applies the single `log_retention_days` value to every object | `object` | `null` | no |
-| `s3_replication_config` | Cross-region replication of the central log bucket, including re-encryption at the destination. `{}` leaves the bucket unreplicated | `object` | `{}` | no |
+| `s3_replication_config` | Cross-region replication of the central log bucket, including re-encryption at the destination. With `enable_s3_object_lock` the auto-created replica gets Object Lock too (enabled in place, without default retention: replicas keep the retention of their source); an external destination bucket must have Object Lock already. `{}` leaves the bucket unreplicated | `object` | `{}` | no |
 | `cloudtrail_account_trails` | Further account-level trails alongside the organization trail, each with region scope, management event scope, Insight types and optional CloudWatch delivery | `list(object)` | `[]` | no |
 | `cloudtrail_org_trail_settings` | Region scope of the organization trail: multi-region recording and global service events. `{}` keeps both switched on | `object` | `{}` | no |
 | `cloudwatch_log_subscriptions` | Subscription filters on log groups. An empty `destination_arn` routes to the module's own Kinesis stream | `list(object)` | `[]` | no |
@@ -51,7 +51,7 @@ Every resource, the central log bucket included, is created in the account of th
 | `adopted_elb_log_bucket_name` | Name of an existing bucket to run as the ELB log bucket. Empty derives tlz-elb-logs-<account>-<region>; a value is meant to be paired with an adoption entry that imports the bucket | `string` | `""` | no |
 | `adopted_vpc_flow_logs_bucket_name` | Name of an existing bucket to run as the VPC flow logs bucket. Empty derives tlz-vpc-flow-logs-<account>-<region>; a value is meant to be paired with an adoption entry that imports the bucket | `string` | `""` | no |
 | `elb_log_bucket_lifecycle` | Expiration and archive transitions of the load balancer log bucket | `object` | `{}` | no |
-| `enable_separate_access_logs_bucket` | Keep the access logs in a bucket of their own instead of in the central log bucket | `bool` | `false` | no |
+| `enable_separate_access_logs_bucket` | Keep the S3 server access logs of the central bucket in a bucket of their own, encrypted with Amazon S3-managed keys (SSE-S3), the only default encryption S3 server access logging supports. Without it the central bucket has no server access logging: it cannot log into itself | `bool` | `false` | no |
 | `enable_per_account_kms_keys` | Create an S3 key per account. Needed when the module is applied into member accounts | `bool` | `false` | no |
 | `manage_config_recorder` | Create the Config recorder, delivery channel and recorder status. `false` leaves the account's single recorder slot to its current owner and applies the rest of the module beside it — see [Config recorder ownership](#config-recorder-ownership) | `bool` | `true` | no |
 | `log_bucket_kms_alias` | Alias of the KMS key that encrypts the central log bucket, without the `alias/` prefix. The default is the production alias of the key — see [Fixed resource names](#fixed-resource-names) | `string` | `"tlz-central-logs"` | no |
@@ -75,6 +75,7 @@ Every resource, the central log bucket included, is created in the account of th
 | `elb_log_bucket_lifecycle_rules` | Full lifecycle rule set of the load balancer log bucket. `null` keeps the rule derived from `elb_log_bucket_lifecycle` | `list(object)` | `null` | no |
 | `vpc_flow_logs_bucket_lifecycle_rules` | Full lifecycle rule set of the flow log bucket. `null` keeps the rule derived from `vpc_flow_logs_bucket_config` | `list(object)` | `null` | no |
 | `guardduty_export_prefix` | S3 prefix of the GuardDuty PutObject grant in the central log bucket policy. Carries the same value as the security module's `guardduty_export_prefix` — the publishing destination writes where this grant allows | `string` | `"guardduty/"` | no |
+| `finding_export_source_account_ids` | Account ids, besides the deploying account, whose GuardDuty publishing destination and Macie classification export write to the central log bucket — the Audit account when the finding consumers run there. Each id joins the `aws:SourceAccount` condition of the GuardDuty and Macie grants on the bucket policy and the Macie statement of the bucket key. Empty keeps the generated documents unchanged | `list(string)` | `[]` | no |
 | `guardduty_root_export_cleanup` | Remediation of GuardDuty findings a broken-export workaround wrote to the bucket root. One lifecycle rule per detector account expires the objects under `AWSLogs/<account-id>/GuardDuty/`; empty `account_ids` reads the deploying account. `null` sets no rule | `object` | `null` | no |
 | `central_log_bucket_policies` | Additional and overriding policies of the central log bucket and its KMS key. `{}` keeps the generated documents | `object` | `{}` | no |
 | `access_logs_bucket_policies` | Additional and overriding policy of the separate access logs bucket. Requires `enable_separate_access_logs_bucket` | `object` | `{}` | no |
@@ -470,6 +471,15 @@ security module's publishing destination all derive from the same prefix
 value, so they cannot drift apart; with an empty prefix the destination is
 the bucket root and no marker is created.
 
+The GuardDuty and Macie grants of the bucket policy and the Macie statement
+of the bucket key name the accounts whose exports write here in their
+`aws:SourceAccount` condition: the deploying account, plus every entry of
+`finding_export_source_account_ids` — the Audit account when the finding
+consumers (publishing destination, classification export) run there. The
+Macie key statement additionally names the export configuration and the
+classification jobs of each account as `aws:SourceArn`. With the empty
+default the documents name the deploying account alone, as before.
+
 While the export was broken, a workaround pointed the destination at the bare
 bucket, so findings were written to the bucket **root** as
 `AWSLogs/<account-id>/GuardDuty/...` — outside every `guardduty/`-prefixed
@@ -573,7 +583,7 @@ The module creates the resource types below. They are grouped by the file that d
 | `s3-access-logs.tf` | `aws_s3_bucket`, `aws_s3_bucket_versioning`, `aws_s3_bucket_server_side_encryption_configuration`, `aws_s3_bucket_public_access_block`, `aws_s3_bucket_lifecycle_configuration`, `aws_s3_bucket_policy` |
 | `s3-central.tf` | `aws_s3_bucket`, `aws_s3_bucket_object_lock_configuration`, `aws_s3_bucket_versioning`, `aws_s3_bucket_server_side_encryption_configuration`, `aws_s3_bucket_public_access_block`, `aws_s3_bucket_lifecycle_configuration`, `aws_s3_bucket_logging`, `aws_s3_bucket_policy`, `aws_s3_object` (GuardDuty export folder marker) |
 | `s3-elb-logs.tf` | `aws_s3_bucket`, `aws_s3_bucket_versioning`, `aws_s3_bucket_server_side_encryption_configuration`, `aws_s3_bucket_public_access_block`, `aws_s3_bucket_policy`, `aws_s3_bucket_lifecycle_configuration` |
-| `s3-replication.tf` | `aws_iam_role`, `aws_iam_role_policy`, `aws_kms_key`, `aws_kms_alias`, `aws_s3_bucket`, `aws_s3_bucket_versioning`, `aws_s3_bucket_server_side_encryption_configuration`, `aws_s3_bucket_public_access_block`, `aws_s3_bucket_lifecycle_configuration`, `aws_s3_bucket_policy`, `aws_s3_bucket_replication_configuration` |
+| `s3-replication.tf` | `aws_iam_role`, `aws_iam_role_policy`, `aws_kms_key`, `aws_kms_alias`, `aws_s3_bucket`, `aws_s3_bucket_versioning`, `aws_s3_bucket_object_lock_configuration`, `aws_s3_bucket_server_side_encryption_configuration`, `aws_s3_bucket_public_access_block`, `aws_s3_bucket_lifecycle_configuration`, `aws_s3_bucket_policy`, `aws_s3_bucket_replication_configuration` |
 | `ssm-associations.tf` | `aws_ssm_association` |
 | `vpc-flow-logs.tf` | `aws_s3_bucket`, `aws_s3_bucket_versioning`, `aws_s3_bucket_public_access_block`, `aws_s3_bucket_server_side_encryption_configuration`, `aws_s3_bucket_lifecycle_configuration`, `aws_s3_bucket_policy`, `aws_iam_role`, `aws_iam_role_policy`, `aws_s3_bucket_replication_configuration` |
 

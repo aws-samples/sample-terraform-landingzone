@@ -51,6 +51,9 @@ resource "aws_subnet" "this" {
     Name = each.key
     Type = each.value.type
   })
+
+  # Same edge as on aws_vpc.this: allocate only after the pool's CIDR exists.
+  depends_on = [aws_vpc_ipam_pool_cidr.this, aws_vpc_ipam_pool_cidr.additional]
 }
 
 # =============================================================================
@@ -80,14 +83,16 @@ resource "aws_route_table_association" "this" {
 # =============================================================================
 
 locals {
-  # Flattened custom routes: "vpc_name.subnet_name.idx" → route definition +
-  # subnet_key. Routes of target_type "tgw" are intersected with
+  # Flattened custom routes: "vpc_name.subnet_name.<name or idx>" → route
+  # definition + subnet_key. A route's optional name replaces its list index
+  # in the key, so removing or reordering other routes leaves it in place.
+  # Routes of target_type "tgw" are intersected with
   # var.transit_gateway.enabled; var.vpcs rejects such routes at
   # plan time while the Transit Gateway is off, so the filter never silently
   # drops a configured route.
   custom_route_map = merge([
     for key, s in local.subnet_map : {
-      for idx, route in s.custom_routes : "${key}.${idx}" => {
+      for idx, route in s.custom_routes : "${key}.${route.name != null ? route.name : idx}" => {
         subnet_key                   = key
         vpc_name                     = s.vpc_name
         destination_cidr_block       = route.destination_cidr_block
@@ -152,11 +157,12 @@ locals {
     }
   ]...)
 
-  # Flattened gateway route table routes: "vpc_name.table_name.idx" → route.
+  # Flattened gateway route table routes: "vpc_name.table_name.<name or idx>"
+  # → route, keyed like custom_route_map.
   # "tgw" routes carry the same Transit Gateway guard as custom_route_map.
   gateway_route_map = merge([
     for table_key, g in local.gateway_route_table_map : {
-      for idx, route in g.routes : "${table_key}.${idx}" => {
+      for idx, route in g.routes : "${table_key}.${route.name != null ? route.name : idx}" => {
         table_key                    = table_key
         vpc_name                     = g.vpc_name
         destination_cidr_block       = route.destination_cidr_block
@@ -253,7 +259,7 @@ resource "aws_route" "private_nat" {
 
   route_table_id         = aws_route_table.this[each.key].id
   destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.this[local.nat_gw_per_vpc[each.value.vpc_name]].id
+  nat_gateway_id         = aws_nat_gateway.this[local.private_subnet_nat_gw[each.key]].id
 }
 
 # Isolated subnets: no default route (by design)

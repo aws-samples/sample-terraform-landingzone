@@ -1,10 +1,17 @@
 # Bootstrap — creates S3 bucket and DynamoDB for remote state
 # No include "root" — uses local state (chicken-and-egg)
-# Skipped when state_backend = "local"
+# Skipped when state_backend = "local", and when enable_deployment_account = true
+# (the state bucket then lives in the deployment account: stacks/deployment/bootstrap)
 
 locals {
   common     = read_terragrunt_config(find_in_parent_folders("env/common.hcl"))
   compliance = read_terragrunt_config("${get_repo_root()}/configurations/loader.hcl")
+
+  # With the deployment account on, stacks/deployment/bootstrap creates the one
+  # state bucket of this deployment under the same configured name; this unit
+  # would create a second bucket of that global name in the management
+  # account. try() keeps a common.hcl without the key on the default path.
+  enable_deployment_account = try(local.common.locals.enable_deployment_account, false)
 
   # Same assignment as stacks/root.hcl, VERBATIM (no include "root", so it is
   # repeated here; a guard test pins the copies to each other). Outside the
@@ -22,7 +29,7 @@ locals {
 }
 
 exclude {
-  if      = local.common.locals.state_backend != "s3"
+  if      = local.common.locals.state_backend != "s3" || local.enable_deployment_account
   actions = ["all"]
 }
 
@@ -88,6 +95,14 @@ terraform {
   before_hook "refuse_non_s3_backend" {
     commands = ["init", "plan", "apply", "destroy", "import", "validate", "refresh", "test"]
     execute  = local.common.locals.state_backend == "s3" ? ["true"] : ["sh", "-c", "echo 'ERROR: stacks/management/bootstrap creates the S3 bucket and the DynamoDB lock table for state_backend = \"s3\", but env/common.hcl sets another backend. Set state_backend = \"s3\" with the real bucket and lock table names first (docs/operations.md, Switching the backend from local to S3), then run this unit.' >&2; exit 1"]
+  }
+
+  # Same mechanism for the deployment account: `exclude` keeps this unit out of
+  # `run --all`, the hook refuses a direct call that would create the second
+  # bucket of the same name in the management account.
+  before_hook "refuse_deployment_account_mode" {
+    commands = ["init", "plan", "apply", "destroy", "import", "validate", "refresh", "test"]
+    execute  = local.enable_deployment_account ? ["sh", "-c", "echo 'ERROR: stacks/management/bootstrap is not the state backend of this deployment: enable_deployment_account = true puts the state bucket in the deployment account; run stacks/deployment/bootstrap.' >&2; exit 1"] : ["true"]
   }
 }
 

@@ -80,8 +80,21 @@ variable "branch_name" {
   }
 }
 
+variable "aws_profile" {
+  description = "Name of the AWS profile the stacks run with -- the aws_profile of env/common.hcl, which Terragrunt writes into every unit's provider.tf and backend.tf. A build container has no such profile, so the build steps of the codepipeline variant and the command of the ecs variant write one of this name into ~/.aws/config before Terragrunt starts: it assumes deployment_role_arns[\"management\"] with the container's own credentials (credential_source = EcsContainer, the role CodeBuild or ECS attached to the container). From there the pipeline walks exactly the operator's path: that role in the management account, the member access roles and the state bucket's role from it. The name itself is free; a laptop keeps its own ~/.aws/config entry of the same name. The external variant writes no file -- its runner exports the OIDC session and the profile uses credential_source = Environment (see the module README)."
+  type        = string
+
+  # The name lands inside a single-quoted shell word of the build command; a
+  # quote or whitespace would break it, and an empty name leaves Terragrunt's
+  # files pointing at a profile nobody wrote.
+  validation {
+    condition     = length(var.aws_profile) > 0 && !can(regex("['\\s]", var.aws_profile))
+    error_message = "aws_profile must be a non-empty profile name without quotes or whitespace: the build writes a profile of this name that assumes the management deployment role, and Terragrunt's provider.tf and backend.tf name the same profile."
+  }
+}
+
 variable "deployment_role_arns" {
-  description = "Map of account name to Deployment_Role ARN for cross-account access"
+  description = "Map of account name to Deployment Role ARN for cross-account access. The key \"management\" is required: it is the role the pipeline's profile (aws_profile) assumes before Terragrunt starts, and every further hop -- member access roles, the state bucket's role -- is made from it. Every entry is granted to the pipeline's roles for sts:AssumeRole."
   type        = map(string)
 
   validation {
@@ -90,6 +103,11 @@ variable "deployment_role_arns" {
       can(regex("^arn:(aws|aws-cn|aws-us-gov|aws-iso|aws-iso-b|aws-eusc):iam::[0-9]{12}:role/", arn))
     ])
     error_message = "Each deployment_role_arns value must be a valid IAM role ARN (arn:<partition>:iam::<account-id>:role/<name>)."
+  }
+
+  validation {
+    condition     = contains(keys(var.deployment_role_arns), "management")
+    error_message = "deployment_role_arns must carry the key \"management\": the pipeline's build writes a profile that assumes exactly that entry before Terragrunt starts, and the stacks' provider and backend run from it."
   }
 }
 

@@ -5,7 +5,7 @@ Organization-level policies including Service Control Policies (SCPs), Resource 
 | File | Description |
 |------|-------------|
 | `account-move-logs-policy.json` | CloudWatch Logs permissions for the account-move Lambda function |
-| `account-move-orgs-policy.json` | Organizations permissions for the account-move Lambda (MoveAccount, DescribeAccount) |
+| `account-move-orgs-policy.json` | Organizations read permissions for the account-move Lambda (DescribeAccount, ListParents); the function only logs account events |
 | `lambda-trust-policy.json` | Trust policy allowing Lambda service to assume organization automation roles |
 | `org-tag-policy.json` | Organization tag policy enforcing allowed values for the BackupPlan tag |
 | `pipeline-scp.json` | SCP protecting pipeline and deployment IAM roles from modification |

@@ -23,6 +23,13 @@ locals {
   dir_name     = basename(dirname(get_terragrunt_dir()))
   account_name = join("-", [for part in split("-", local.dir_name) : title(part)])
 
+  # An account declared in an OU marked ignore = true (or below one) is
+  # suspended: configurations/ou-membership.hcl lists it, this unit resolves no
+  # account id for it, and its exclude block takes it out of the run — without
+  # an account lookup and without assuming a role the deny-all SCP would refuse.
+  ou        = read_terragrunt_config("${get_repo_root()}/configurations/ou-membership.hcl")
+  suspended = contains(local.ou.locals.suspended_account_names, local.account_name)
+
   # Determine which account holds SSM parameters
   ssm_source_account = local.common.locals.enable_deployment_account ? local.accounts.locals.deployment_account_id : ""
   # Reading from the deployment account needs a role hop. The AWS CLI has no
@@ -55,15 +62,16 @@ locals {
   # Terragrunt evaluates both branches of a ternary, so a run_cmd in the
   # unselected branch still executes and only its result is discarded. The
   # override condition therefore also lives inside the command string: with
-  # a set override the call degenerates to a no-op `true` instead of firing
-  # the AWS CLI on every terragrunt command.
+  # a set override, or a suspended account, the call degenerates to a no-op
+  # `true` instead of firing the AWS CLI on every terragrunt command.
   ssm_raw = local.override_id != "" ? local.override_id : run_cmd(
     "--terragrunt-global-cache", "--terragrunt-quiet",
     "bash", "-c",
-    local.override_id != "" ? "true" : "(${local.ssm_command}) 2>&1 || true"
+    local.override_id != "" || local.suspended ? "true" : "(${local.ssm_command}) 2>&1 || true"
   )
 
-  # Error classification (no silent fallbacks): a twelve-digit ID is used;
+  # Error classification (no silent fallbacks): a suspended account resolves
+  # to "" before any lookup; otherwise a twelve-digit ID is used;
   # ParameterNotFound is the one legitimate empty case (bootstrap — the
   # parameter does not exist yet, so the unit's exclude block takes it out
   # of the run). Every other output (expired credentials, AccessDenied,
@@ -72,7 +80,8 @@ locals {
   # is the error message (pattern from configurations/ou-membership.hcl).
   unit_name = "${basename(dirname(get_terragrunt_dir()))}/${basename(get_terragrunt_dir())}"
   account_id = (
-    can(regex("^[0-9]{12}$", trimspace(local.ssm_raw))) ? trimspace(local.ssm_raw)
+    local.suspended ? ""
+    : can(regex("^[0-9]{12}$", trimspace(local.ssm_raw))) ? trimspace(local.ssm_raw)
     : can(regex("ParameterNotFound", local.ssm_raw)) ? ""
     : file("ERROR: ${local.unit_name}: SSM account resolution via /tlz/accounts/${local.account_name}/id failed: ${trimspace(local.ssm_raw)}")
   )

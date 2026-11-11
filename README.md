@@ -21,6 +21,7 @@ cp env/accounts.hcl.example env/accounts.hcl
 # (cd stacks/management/bootstrap && terragrunt apply)
 
 # 3. Deploy (from the repository root; each subshell returns there)
+export TG_PROVIDER_CACHE=1   # one provider download for all units; the cache server listens on localhost only
 (cd stacks && terragrunt run --all -- plan)     # Preview
 (cd stacks && terragrunt run --all -- apply)    # Deploy
 ```

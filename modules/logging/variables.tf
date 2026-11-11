@@ -902,7 +902,7 @@ variable "elb_log_bucket_lifecycle" {
 # --- Separate Access Logs Bucket ---
 
 variable "enable_separate_access_logs_bucket" {
-  description = "Create a separate S3 bucket for access logs instead of logging to the central log bucket itself. Recommended for production deployments."
+  description = "Create a separate S3 bucket (SSE-S3) for the S3 server access logs of the central log bucket. Without it the central bucket has no server access logging: it cannot log into itself. Recommended for production deployments."
   type        = bool
   default     = false
 }
@@ -1883,6 +1883,24 @@ variable "guardduty_export_prefix" {
   validation {
     condition     = var.guardduty_export_prefix == "" || !startswith(var.guardduty_export_prefix, "/")
     error_message = "guardduty_export_prefix must not start with a slash — S3 keys are relative and a leading slash creates an empty path segment."
+  }
+}
+
+variable "finding_export_source_account_ids" {
+  description = "Account ids, besides the deploying account, whose GuardDuty publishing destination and Macie classification export write to the central log bucket — the Audit account when the finding consumers run there. Each id joins the aws:SourceAccount condition of the GuardDuty and Macie grants on the bucket policy and the Macie statement of the bucket key. Empty keeps the deploying account alone and the generated documents unchanged."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for id in var.finding_export_source_account_ids : can(regex("^[0-9]{12}$", id))
+    ])
+    error_message = "Every finding_export_source_account_ids entry must be a 12-digit AWS account id — the id becomes an aws:SourceAccount condition value of the export grants."
+  }
+
+  validation {
+    condition     = length(distinct(var.finding_export_source_account_ids)) == length(var.finding_export_source_account_ids)
+    error_message = "finding_export_source_account_ids must not contain duplicates."
   }
 }
 

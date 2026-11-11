@@ -366,6 +366,7 @@ run "custom_configuration" {
       { name = "L4", parent_name = "L3" },
       { name = "L5", parent_name = "L4" },
       { name = "Ignored", ignore = true },
+      { name = "Ignored-Child", parent_name = "Ignored" },
     ]
 
     service_control_policies = [
@@ -444,7 +445,7 @@ run "custom_configuration" {
     opt_in_regions = ["af-south-1", "ap-east-1"]
   }
 
-  # Five OU levels plus one ignored level-1 OU
+  # Five OU levels plus one ignored level-1 OU with a child below it
   assert {
     condition     = length(aws_organizations_organizational_unit.level_1) == 2
     error_message = "Two level-1 OUs must be created (L1 and Ignored)."
@@ -452,17 +453,19 @@ run "custom_configuration" {
 
   assert {
     condition = alltrue([
-      length(aws_organizations_organizational_unit.level_2) == 1,
+      length(aws_organizations_organizational_unit.level_2) == 2,
       length(aws_organizations_organizational_unit.level_3) == 1,
       length(aws_organizations_organizational_unit.level_4) == 1,
       length(aws_organizations_organizational_unit.level_5) == 1,
     ])
-    error_message = "Each nesting level must create exactly one OU."
+    error_message = "Level 2 must hold L2 and Ignored-Child; each deeper level exactly one OU."
   }
 
+  # ignore = true covers the OU and every OU below it: an account declared in
+  # Ignored-Child is as much out of the fan-out as one declared in Ignored.
   assert {
-    condition     = length(output.ignored_ou_ids) == 1
-    error_message = "Exactly one OU must be reported as ignored."
+    condition     = length(output.ignored_ou_ids) == 2
+    error_message = "Both the ignored OU and its child must be reported in ignored_ou_ids."
   }
 
   # All policy types created and attached
@@ -1473,9 +1476,9 @@ run "quarantine_scp_oversized_content_rejected" {
   command = plan
 
   variables {
-    # 5200 characters, not valid JSON: the validation's try() falls back to
-    # the raw length, which exceeds the 5120-character AWS SCP limit.
-    quarantine_scp_content = join("", [for i in range(520) : "0123456789"])
+    # 10300 characters, not valid JSON: the validation's try() falls back to
+    # the raw length, which exceeds the 10240-character AWS SCP limit.
+    quarantine_scp_content = join("", [for i in range(515) : "01234567890123456789"])
   }
 
   expect_failures = [var.quarantine_scp_content]
@@ -1735,6 +1738,33 @@ run "dormant_upsert_names_default_to_the_literals" {
     condition     = strcontains(aws_iam_role_policy.scp_auto_revert_lambda[0].policy, ":sqs:*:*:tlz-scp-auto-revert-dlq")
     error_message = "The SCP auto-revert policy's DLQ grant must name the default queue."
   }
+}
+
+# regression: the operator's own principal could not be exempted from the
+# auto-revert, so on the default path the function undid the operator's applies.
+run "regression_scp_revert_exempt_arns_reach_the_function" {
+  command = plan
+
+  variables {
+    enable_scp_revert_detection      = true
+    enable_scp_auto_revert           = true
+    scp_revert_exempt_principal_arns = ["arn:aws:iam::123456789012:role/aws-reserved/sso.amazonaws.com/eu-central-1/AWSReservedSSO_Admin_abc123"]
+  }
+
+  assert {
+    condition     = jsondecode(aws_lambda_function.scp_auto_revert[0].environment[0].variables["SCP_REVERT_EXEMPT_ARNS"]) == ["arn:aws:iam::123456789012:role/aws-reserved/sso.amazonaws.com/eu-central-1/AWSReservedSSO_Admin_abc123"]
+    error_message = "scp_revert_exempt_principal_arns must reach the auto-revert function's environment."
+  }
+}
+
+run "scp_revert_exempt_arn_malformed_rejected" {
+  command = plan
+
+  variables {
+    scp_revert_exempt_principal_arns = ["AWSReservedSSO_Admin_abc123"]
+  }
+
+  expect_failures = [var.scp_revert_exempt_principal_arns]
 }
 
 # Reach: an override lands on each resource; the EventBridge targets follow
@@ -2190,6 +2220,16 @@ run "regression_account_move_runs_in_us_east_1" {
 run "regression_quarantine_release_is_notification_only" {
   command = plan
 
+  # The notification text interpolates the SCP id; pinned so the text is
+  # known at plan.
+  override_resource {
+    target          = aws_organizations_policy.quarantine
+    override_during = plan
+    values = {
+      id = "p-quarantine"
+    }
+  }
+
   variables {
     enable_quarantine_scp          = true
     quarantine_scp_targets         = ["123456789012"]
@@ -2205,4 +2245,170 @@ run "regression_quarantine_release_is_notification_only" {
     )
     error_message = "The quarantine release must be a notification only: one SNS target and no function log group key."
   }
+
+  # The notification names the release path: the accounts leave the quarantine
+  # OU through their declaration, not through a detach of the SCP.
+  assert {
+    condition = (
+      strcontains(aws_cloudwatch_event_target.quarantine_detach[0].input_transformer[0].input_template, "set quarantined = false") &&
+      !strcontains(aws_cloudwatch_event_target.quarantine_detach[0].input_transformer[0].input_template, "detach")
+    )
+    error_message = "The release notification must ask for quarantined = false on the account entries and an apply of stacks/management/accounts, not for a detach of the SCP."
+  }
+}
+
+# regression: the lists stacks/management/organization renders from
+# env/common.hcl.example must plan. The example once shipped delegated
+# administrators with placeholder account ids for services without trusted
+# access, and declarative-policy targets that were account names.
+run "regression_example_organization_lists_plan" {
+  command = plan
+
+  variables {
+    organizational_units = [
+      { name = "Security", parent_name = "__root__" },
+      { name = "Infrastructure", parent_name = "__root__" },
+      { name = "Workloads", parent_name = "__root__" },
+      { name = "Suspended", parent_name = "__root__", ignore = true },
+      { name = "Quarantine", parent_name = "__root__" },
+      { name = "Sandbox", parent_name = "Workloads" },
+      { name = "Dev", parent_name = "Workloads" },
+      { name = "Test", parent_name = "Workloads" },
+      { name = "Prod", parent_name = "Workloads" },
+    ]
+    declarative_policies = [
+      {
+        name    = "vpc-block-public-access"
+        content = "{\"ec2_attributes\":{}}"
+        targets = ["Security", "Infrastructure", "Workloads"]
+      },
+    ]
+    enable_quarantine_scp         = true
+    quarantine_ou_name            = "Quarantine"
+    aws_service_access_principals = ["iam.amazonaws.com"]
+    service_access_principals     = []
+  }
+
+  assert {
+    condition     = length(aws_organizations_policy_attachment.declarative) == 3
+    error_message = "The example's declarative policy must attach to its three OU targets."
+  }
+
+  assert {
+    condition     = keys(aws_organizations_policy_attachment.quarantine) == ["Quarantine"]
+    error_message = "The example's quarantine SCP must be attached to the Quarantine OU and nowhere else."
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Quarantine OU: quarantine_ou_name names a declared OU that the quarantine
+# SCP is attached to in the organization apply, so an account created inside
+# it carries the SCP from its first second. The OU joins the attachment
+# targets, the SCP quota count and the target-resolution check, and
+# quarantine_ou_id publishes its id for the accounts module.
+# -----------------------------------------------------------------------------
+
+run "quarantine_ou_adds_attachment_and_quota_slot" {
+  command = plan
+
+  override_resource {
+    target          = aws_organizations_organizational_unit.level_1["Quarantine"]
+    override_during = plan
+    values = {
+      id = "ou-abc1-quarantine"
+    }
+  }
+
+  variables {
+    organizational_units = [
+      { name = "Workloads" },
+      { name = "Quarantine" },
+    ]
+    enable_quarantine_scp  = true
+    quarantine_scp_targets = ["123456789012"]
+    quarantine_ou_name     = "Quarantine"
+  }
+
+  assert {
+    condition     = length(aws_organizations_policy_attachment.quarantine) == 2
+    error_message = "The quarantine SCP must be attached to the listed targets plus the quarantine OU."
+  }
+
+  assert {
+    condition     = aws_organizations_policy_attachment.quarantine["Quarantine"].target_id == "ou-abc1-quarantine"
+    error_message = "The quarantine OU's attachment must resolve the OU name to its id."
+  }
+
+  assert {
+    condition     = local.scp_attachment_count_by_target["Quarantine"] == 1
+    error_message = "The quarantine OU must take one slot in the SCP quota count."
+  }
+
+  assert {
+    condition     = contains(local.policy_targets, "Quarantine")
+    error_message = "The quarantine OU must enter the target-resolution check."
+  }
+
+  assert {
+    condition     = output.quarantine_ou_id == "ou-abc1-quarantine"
+    error_message = "quarantine_ou_id must publish the quarantine OU's id."
+  }
+}
+
+# The OU listed twice — in quarantine_scp_targets and as quarantine_ou_name —
+# is one attachment and one quota slot.
+run "quarantine_ou_listed_twice_is_one_attachment" {
+  command = plan
+
+  variables {
+    organizational_units   = [{ name = "Quarantine" }]
+    enable_quarantine_scp  = true
+    quarantine_scp_targets = ["Quarantine"]
+    quarantine_ou_name     = "Quarantine"
+  }
+
+  assert {
+    condition     = length(aws_organizations_policy_attachment.quarantine) == 1 && local.scp_attachment_count_by_target["Quarantine"] == 1
+    error_message = "The quarantine OU named in both inputs must count once."
+  }
+}
+
+# Unset, the OU adds nothing: the target list and the output stay as before.
+run "quarantine_ou_unset_keeps_the_target_list" {
+  command = plan
+
+  variables {
+    organizational_units   = [{ name = "Workloads" }]
+    enable_quarantine_scp  = true
+    quarantine_scp_targets = ["123456789012"]
+  }
+
+  assert {
+    condition     = length(aws_organizations_policy_attachment.quarantine) == 1 && output.quarantine_ou_id == ""
+    error_message = "Without quarantine_ou_name the attachments are the listed targets only and quarantine_ou_id is empty."
+  }
+}
+
+run "quarantine_ou_requires_scp_toggle" {
+  command = plan
+
+  variables {
+    organizational_units  = [{ name = "Quarantine" }]
+    enable_quarantine_scp = false
+    quarantine_ou_name    = "Quarantine"
+  }
+
+  expect_failures = [var.quarantine_ou_name]
+}
+
+run "quarantine_ou_must_be_declared" {
+  command = plan
+
+  variables {
+    organizational_units  = [{ name = "Workloads" }]
+    enable_quarantine_scp = true
+    quarantine_ou_name    = "Quarantine"
+  }
+
+  expect_failures = [var.quarantine_ou_name]
 }

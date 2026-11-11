@@ -1,6 +1,7 @@
 # Member Roles — the IAM roles and customer-managed policies of env/common.hcl
 # whose deployment_targets name member accounts (by OU name, account name or
-# account ID), created in those accounts from the Management Account.
+# account ID; an OU name also reaches the accounts of the OUs nested under it),
+# created in those accounts from the Management Account.
 # Backup-Role is the role the organization backup policy runs every backup
 # selection as; EC2-Default-SSM-Role is the default instance role.
 #
@@ -19,6 +20,7 @@ include "root" {
 locals {
   common     = read_terragrunt_config(find_in_parent_folders("env/common.hcl"))
   compliance = read_terragrunt_config("${get_repo_root()}/configurations/loader.hcl")
+  ou         = read_terragrunt_config("${get_repo_root()}/configurations/ou-membership.hcl")
 
   partition    = local.common.locals.partition
   region       = local.common.locals.region
@@ -132,6 +134,7 @@ generate "member_roles" {
         account_name              = "${name}"
         account_id                = "${id}"
         account_ou_id             = lookup(var.account_ou_ids, "${name}", "")
+        account_ou_names          = ${jsonencode(lookup(local.ou.locals.ou_chain, lookup(local.ou.locals.account_ou, name, ""), []))}
         ou_name_to_id             = var.ou_name_to_id
         partition                 = "${local.partition}"
         roles                     = var.roles

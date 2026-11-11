@@ -65,6 +65,7 @@ def test_regression_member_roles_unit_calls_the_module_per_account(tmp_path):
     assert 'module "acct_%s"' % ACCOUNT in calls
     assert re.search(r'source\s*=\s*"[^"]*/modules/member-roles"', calls)
     assert "providers = { aws = aws.acct_%s }" % ACCOUNT in calls
+    assert re.search(r'account_ou_names\s*=\s*\["Workloads"\]', calls), "the OU chain of the account must reach the module"
     providers = rendered["generate"]["providers"]["contents"]
     assert ":iam::%s:role/" % ACCOUNT in providers
     roles = {role["name"]: role for role in rendered["inputs"]["roles"]}

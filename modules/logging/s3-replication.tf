@@ -88,6 +88,21 @@ resource "aws_s3_bucket_versioning" "replication_dest" {
   }
 }
 
+# A central bucket with Object Lock replicates only into a destination with
+# Object Lock. Enabled here rather than on the bucket resource: S3 enables
+# Object Lock on an existing versioned bucket in place, while the bucket
+# argument would replace a replica that is already deployed. No default
+# retention: replicated objects keep the retention of their source.
+resource "aws_s3_bucket_object_lock_configuration" "replication_dest" {
+  count  = local.create_replication_dest_bucket && var.enable_s3_object_lock ? 1 : 0
+  region = var.s3_replication_config.destination_region
+  bucket = aws_s3_bucket.replication_dest[0].id
+
+  object_lock_enabled = "Enabled"
+
+  depends_on = [aws_s3_bucket_versioning.replication_dest]
+}
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "replication_dest" {
   count  = local.create_replication_dest_bucket ? 1 : 0
   region = var.s3_replication_config.destination_region
@@ -207,5 +222,6 @@ resource "aws_s3_bucket_replication_configuration" "central_logs" {
   depends_on = [
     aws_s3_bucket_versioning.central_logs,
     aws_s3_bucket_versioning.replication_dest,
+    aws_s3_bucket_object_lock_configuration.replication_dest,
   ]
 }

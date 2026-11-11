@@ -15,6 +15,10 @@ locals {
 
   # Read for the adoption list only (loader local adoption_imports_by_stack).
   compliance = read_terragrunt_config("${get_repo_root()}/configurations/loader.hcl")
+
+  # Read for the exclude condition: management/logging is skipped while
+  # enable_logging is false and then has no outputs to read on apply.
+  common = read_terragrunt_config(find_in_parent_folders("env/common.hcl"))
 }
 
 # Resource adoption: declarative import blocks rendered from the adoption
@@ -33,7 +37,7 @@ generate "imports" {
 }
 
 exclude {
-  if      = local.account_id == ""
+  if      = local.account_id == "" || !local.common.locals.enable_logging
   actions = ["all"]
 }
 

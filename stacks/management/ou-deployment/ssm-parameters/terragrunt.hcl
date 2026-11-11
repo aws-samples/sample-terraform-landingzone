@@ -123,7 +123,7 @@ generate "ssm_parameters" {
               for id in ${jsonencode(local.resolved_accounts)} :
               contains(${jsonencode(sort(values(dependency.accounts.outputs.active_account_ids)))}, id)
             ]))
-            error_message = "At least one resolved target account is not among the active account IDs of the accounts unit — warm accounts are excluded from deployment targets. Check env/accounts.hcl, warm flags and the ou_deployments entry 'ssm_parameters'."
+            error_message = "At least one resolved target account is not among the active account IDs of the accounts unit — warm or suspended accounts are excluded from deployment targets. Check env/accounts.hcl, warm flags, the OU of each account and the ou_deployments entry 'ssm_parameters'."
           }
         }
       }

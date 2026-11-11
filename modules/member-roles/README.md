@@ -1,6 +1,6 @@
 # Member Roles Module
 
-Creates, in one member account, the IAM roles and customer-managed policies whose `deployment_targets` name that account: by the name of its OU, by its account name or by its account ID. It reads the same `roles` and `customer_managed_policies` lists as the iam module, which creates every entry in the management account.
+Creates, in one member account, the IAM roles and customer-managed policies whose `deployment_targets` name that account: by the name of its OU or of an OU above it, by its account name or by its account ID. It reads the same `roles` and `customer_managed_policies` lists as the iam module, which creates every entry in the management account.
 
 `stacks/management/member-roles` calls it once per active account (toggle `enable_member_roles` in `env/common.hcl`), through a provider that assumes `account_access_role_name` in that account. With the shipped `env/common.hcl.example` this puts `Backup-Role` into the accounts of the Security, Infrastructure and Workloads OUs, where the organization backup policy `primary-backup-plan` runs every backup selection as `arn:<partition>:iam::$account:role/Backup-Role`, and `EC2-Default-SSM-Role` with its instance profile, `SSM-S3-Policy` and the boundary `End-User-Policy` next to it.
 
@@ -14,6 +14,7 @@ A role that already exists in a member account under the same name (created by o
 | `account_id` | 12-digit ID of the member account the provider points at | `string` | — | yes |
 | `account_ou_id` | ID of the OU the account sits in; empty when unknown, then only the account name or ID selects it | `string` | `""` | no |
 | `ou_name_to_id` | OU name to OU ID map; resolves an OU name in `deployment_targets` | `map(string)` | `{}` | no |
+| `account_ou_names` | Names of the account's OU and of every OU above it; an OU target then reaches the accounts of its nested OUs. Empty: only the OU of `account_ou_id` selects the account | `list(string)` | `[]` | no |
 | `partition` | `aws` or `aws-eusc`; expands partition-neutral managed policy names | `string` | `"aws"` | no |
 | `roles` | Role definitions as in the iam module, plus `customer_managed_policy_names`. Only entries whose `deployment_targets` name this account are created. A policy named in `customer_managed_policy_names` or as `permissions_boundary` must be deployed to the same account, else the plan fails | `list(object)` | `[]` | no |
 | `customer_managed_policies` | Customer-managed policy definitions as in the iam module, selected by the same rule | `list(object)` | `[]` | no |

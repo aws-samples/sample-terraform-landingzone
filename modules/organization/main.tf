@@ -103,7 +103,7 @@ locals {
     [for att in local.rcp_attachments : att.target],
     [for att in local.declarative_policy_attachments : att.target],
     [for att in local.chatbot_policy_attachments : att.target],
-    var.enable_quarantine_scp ? var.quarantine_scp_targets : [],
+    var.enable_quarantine_scp ? local.quarantine_scp_attachment_targets : [],
   ))
 
   unresolvable_policy_targets = sort([
@@ -111,9 +111,35 @@ locals {
     if !contains(local.known_target_names, target) && !can(regex("^[0-9]{12}$", target))
   ])
 
-  # Ignored OU names
-  ignored_ou_names = toset([
+  # OU name → parent name, for the ancestor walk below.
+  ou_parent = { for ou in var.organizational_units : ou.name => ou.parent_name }
+
+  # Ancestor chains, unrolled to the five supported levels (the same unroll
+  # the OU-membership resolution of the stacks uses): ou_chain[name] =
+  # [name, parent, grandparent, ...] without "__root__".
+  ou_parent_1 = { for name, parent in local.ou_parent : name => parent }
+  ou_parent_2 = { for name, _ in local.ou_parent : name => lookup(local.ou_parent, local.ou_parent_1[name], "__root__") }
+  ou_parent_3 = { for name, _ in local.ou_parent : name => lookup(local.ou_parent, local.ou_parent_2[name], "__root__") }
+  ou_parent_4 = { for name, _ in local.ou_parent : name => lookup(local.ou_parent, local.ou_parent_3[name], "__root__") }
+
+  ou_chain = {
+    for name, _ in local.ou_parent : name => [
+      for link in [name, local.ou_parent_1[name], local.ou_parent_2[name], local.ou_parent_3[name], local.ou_parent_4[name]] :
+      link if link != "__root__"
+    ]
+  }
+
+  # Ignored OU names: every OU with ignore = true and every OU below one.
+  # Accounts declared there are no deployment targets (the accounts module
+  # leaves them out of its active_* outputs, the stacks generate no provider
+  # for them). Policy attachments are unaffected.
+  directly_ignored_ou_names = toset([
     for ou in var.organizational_units : ou.name if ou.ignore
+  ])
+
+  ignored_ou_names = toset([
+    for name, chain in local.ou_chain : name
+    if length(setintersection(toset(chain), local.directly_ignored_ou_names)) > 0
   ])
 
   # Ignored OU IDs — resolved after OU creation

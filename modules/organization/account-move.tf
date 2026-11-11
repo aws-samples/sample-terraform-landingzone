@@ -1,6 +1,7 @@
 # =============================================================================
 # Account Move Automation (EventBridge + Lambda)
-# Automatically moves accounts between OUs based on Organizations API events.
+# Logs the CreateAccount and MoveAccount events of Organizations; the function
+# moves no account.
 # =============================================================================
 
 # Organizations delivers CreateAccount and MoveAccount to EventBridge in the

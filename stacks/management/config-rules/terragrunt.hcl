@@ -112,12 +112,7 @@ terraform {
   source = "${get_repo_root()}//modules/config-rules"
 }
 
-# No ordering dependency on ../iam.
-#
-# Such an edge would close a cycle, because the iam stack reads the VPC and
-# subnet identifiers it needs for Managed AD: networking -> config-rules -> iam
-# -> networking. Terragrunt answers a cycle by dropping units from the run
-# queue. The edge would carry nothing:
+# No ordering dependency on ../iam. The edge would carry nothing:
 #
 #   1. It read no output (`skip_outputs = true`) — no value flowed.
 #   2. modules/config-rules creates five resource types, all of them
@@ -152,9 +147,9 @@ dependency "accounts" {
   mock_outputs = {
     account_ids        = {}
     active_account_ids = {}
-    # active_account_ou_ids carries the OU (parent) ID per non-warm account —
-    # the accounts module is the only place that knows which OU an account
-    # sits in; see inputs.account_ou_ids.
+    # active_account_ou_ids carries the declared OU ID per account, warm and
+    # suspended accounts excluded — the accounts module is the only place that
+    # knows which OU an account is declared in; see inputs.account_ou_ids.
     active_account_ou_ids = {}
   }
   mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
@@ -281,11 +276,12 @@ inputs = {
   #
   # Neither value belongs in a configuration file: both come from other stacks.
   # ou_name_to_id is an output of the organization stack. The account-to-OU
-  # assignment has no stack of its own; the accounts module derives it from
-  # parent_id per account and publishes it as active_account_ou_ids (warm
-  # accounts excluded — they are no deployment targets). Accounts that this
-  # landing zone does not create are not in that output and therefore not
-  # resolvable through an OU name.
+  # assignment has no stack of its own; the accounts module publishes each
+  # account's declared OU as active_account_ou_ids (warm and suspended
+  # accounts excluded — they are no deployment targets; a quarantined account
+  # keeps its declared OU there). Accounts that this landing zone does not
+  # create are not in that output and therefore not resolvable through an OU
+  # name.
   ou_name_to_id  = dependency.organization.outputs.ou_name_to_id
   account_ou_ids = dependency.accounts.outputs.active_account_ou_ids
 }

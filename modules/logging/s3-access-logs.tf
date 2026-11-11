@@ -25,16 +25,17 @@ resource "aws_s3_bucket_versioning" "access_logs" {
   }
 }
 
+# SSE-S3, not the log bucket key: S3 server access logging does not support a
+# target bucket with SSE-KMS default encryption (S3 user guide, "Enabling
+# Amazon S3 server access logging").
 resource "aws_s3_bucket_server_side_encryption_configuration" "access_logs" {
   count  = var.enable_separate_access_logs_bucket ? 1 : 0
   bucket = aws_s3_bucket.access_logs[0].id
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm     = "aws:kms"
-      kms_master_key_id = aws_kms_key.log_bucket.arn
+      sse_algorithm = "AES256"
     }
-    bucket_key_enabled = true
   }
 }
 

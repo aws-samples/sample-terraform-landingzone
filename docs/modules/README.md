@@ -26,5 +26,6 @@ Each module is self-contained under `modules/` with its own README, inputs, outp
 | [service-catalog](../../modules/service-catalog/README.md) | Service Catalog portfolios with products, launch constraints, and org-wide sharing |
 | [service-quotas](../../modules/service-quotas/README.md) | Manages AWS Service Quota increase requests in the Management Account |
 | [ssm-parameters](../../modules/ssm-parameters/README.md) | Creates SSM parameters for cross-account configuration sharing |
+| [workload-networking](../../modules/workload-networking/README.md) | Security groups, target groups and internal load balancers a workload account owns in the VPCs the management account shares with it |
 
 For detailed variable reference across all modules, see [Configuration Reference](../configuration-reference.md).

@@ -54,6 +54,12 @@ inputs = {
   deployment_role_arns        = { management = dependency.deployment_role.outputs.role_arn }
   approval_notification_email = local.common.locals.approval_notification_email
 
+  # The profile Terragrunt writes into every unit's provider.tf and backend.tf.
+  # The build writes a profile of this name into its container before the
+  # first terragrunt command (it assumes the management deployment role above),
+  # so the pipeline runs the stacks exactly as an operator with that profile.
+  aws_profile = local.common.locals.aws_profile
+
   # State-change notifications: EventBridge rules on the selected pipeline
   # execution states, published to the approval topic. Off by default; the
   # state list falls back to the module default (all state changes).

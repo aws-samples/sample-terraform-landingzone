@@ -32,7 +32,11 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 UNIT = "stacks/management/bootstrap"
+DEPLOYMENT_UNIT = "stacks/deployment/bootstrap"
 GUARD_WORDS = "creates the S3 bucket and the DynamoDB lock table"
+MODE_GUARD_WORDS = "is not the state backend of this deployment"
+DEPLOYMENT_GUARD_WORDS = "stacks/deployment/bootstrap creates the state bucket and the lock table in the deployment account"
+PLACEHOLDER_ID = "111111111111"
 
 STANDIN_AWS = (
     "#!/usr/bin/env bash\n"
@@ -61,8 +65,9 @@ def _sub_one(pattern, repl, text):
     return new
 
 
-def _stage(tmp_path, backend):
-    """A staged copy of the tracked tree with env/common.hcl set to `backend`."""
+def _stage(tmp_path, backend, deployment_account=False):
+    """A staged copy of the tracked tree with env/common.hcl set to `backend`;
+    with `deployment_account` the mode is on and every account id is set."""
     root = tmp_path / "repo"
     for rel in _tracked_files():
         src = REPO / rel
@@ -74,8 +79,15 @@ def _stage(tmp_path, backend):
 
     common = (root / "env/common.hcl.example").read_text()
     common = _sub_one(r'^(\s*state_backend\s*=\s*)"local"', r'\g<1>"%s"' % backend, common)
+    if deployment_account:
+        common = _sub_one(r"^(\s*enable_deployment_account\s*=\s*)false\b", r"\g<1>true", common)
     (root / "env/common.hcl").write_text(common)
-    shutil.copy2(root / "env/accounts.hcl.example", root / "env/accounts.hcl")
+    accounts = (root / "env/accounts.hcl.example").read_text()
+    if deployment_account:
+        for key in ("management_account_id", "deployment_account_id", "audit_account_id", "log_archive_account_id"):
+            accounts = _sub_one(r'^(\s*%s\s*=\s*)""' % key, r'\g<1>"%s"' % PLACEHOLDER_ID, accounts)
+        accounts = _sub_one(r"^(\s*workload_accounts\s*=\s*)\{\}", r'\g<1>{ "Workload-Dev" = "%s" }' % PLACEHOLDER_ID, accounts)
+    (root / "env/accounts.hcl").write_text(accounts)
     subprocess.run(["git", "init", "-q", str(root)], check=True)  # nosec B603 B607 -- argv list of this repository's paths and literals, no shell
     return root
 
@@ -229,3 +241,89 @@ def test_render_all_on_the_local_backend_excludes_bootstrap(tmp_path):
         assert (o.get("exclude") or {}).get("if") is True, (
             "the bootstrap unit is not excluded on the local backend: %r" % o.get("exclude")
         )
+
+
+def _bootstrap_objects(objs, unit):
+    """The render --all objects of a bootstrap unit, found by its own local state path."""
+    return [
+        o for o in objs
+        if str(((o.get("remote_state") or {}).get("config") or {}).get("path", "")).endswith(
+            "/%s/terraform.tfstate" % unit.split("/", 1)[1]
+        )
+    ]
+
+
+def test_render_all_with_the_deployment_account_excludes_the_management_bootstrap(tmp_path):
+    """regression: with the deployment account on, both bootstrap units were in the run and would have created two buckets of one global name.
+
+    The state bucket of such a deployment lives in the deployment account
+    (stacks/deployment/bootstrap); `run --all` must leave the management
+    bootstrap out and keep the deployment bootstrap in.
+    """
+    root = _stage(tmp_path, "s3", deployment_account=True)
+
+    proc = _terragrunt(["render", "--all", "--json"], root / "stacks", _env(tmp_path))
+
+    assert proc.returncode == 0, "terragrunt render --all failed (rc=%d):\n%s" % (
+        proc.returncode, proc.stderr[-3000:],
+    )
+    objs = _json_objects(proc.stdout)
+    management, deployment = _bootstrap_objects(objs, UNIT), _bootstrap_objects(objs, DEPLOYMENT_UNIT)
+    assert management and deployment, "render --all emitted no object for a bootstrap unit among %d" % len(objs)
+    assert all((o.get("exclude") or {}).get("if") is True for o in management), (
+        "stacks/management/bootstrap is in the run with the deployment account on: a second bucket of the same name"
+    )
+    assert all((o.get("exclude") or {}).get("if") is False for o in deployment), (
+        "stacks/deployment/bootstrap must stay in the run with the deployment account on"
+    )
+
+
+def test_a_direct_call_with_the_deployment_account_is_refused(tmp_path):
+    """regression: with the deployment account on, both bootstrap units were in the run and would have created two buckets of one global name.
+
+    (second reading: the direct call) `exclude` protects `run --all` only; a
+    direct `terragrunt plan` in the management bootstrap must be refused by a
+    hook before Terraform initialises anything, with a message that names the
+    unit to run instead.
+    """
+    root = _stage(tmp_path, "s3", deployment_account=True)
+    env = _env(tmp_path)
+
+    proc = _terragrunt(["plan"], root / UNIT, env)
+
+    assert proc.returncode != 0, (
+        "a direct `terragrunt plan` in the management bootstrap ran with enable_deployment_account = true"
+    )
+    msg = " ".join(proc.stderr.split())
+    assert MODE_GUARD_WORDS in msg and "stacks/deployment/bootstrap" in msg, (
+        "the refusal does not name the deployment bootstrap:\n%s" % proc.stderr[-3000:]
+    )
+    assert "Initializing the backend" not in proc.stdout + proc.stderr, (
+        "Terraform initialised the backend before the refusal:\n%s" % (proc.stdout + proc.stderr)[-3000:]
+    )
+
+
+def test_a_direct_call_in_the_deployment_bootstrap_without_the_mode_is_refused(tmp_path):
+    """regression: with the deployment account off, a direct call in stacks/deployment/bootstrap assumed a role in an account the deployment does not use.
+
+    Same mechanism as the management bootstrap's guard: `exclude` protects
+    `run --all` only, so the hook refuses the direct call with the mode off
+    before Terraform initialises the backend or reaches AWS.
+    """
+    root = _stage(tmp_path, "s3")
+    env = _env(tmp_path)
+
+    proc = _terragrunt(["plan"], root / DEPLOYMENT_UNIT, env)
+
+    assert proc.returncode != 0, (
+        "a direct `terragrunt plan` in the deployment bootstrap ran with enable_deployment_account = false"
+    )
+    msg = " ".join(proc.stderr.split())
+    assert DEPLOYMENT_GUARD_WORDS in msg, "the refusal does not carry the guard's message:\n%s" % proc.stderr[-3000:]
+    assert "Initializing the backend" not in proc.stdout + proc.stderr, (
+        "Terraform initialised the backend before the refusal:\n%s" % (proc.stdout + proc.stderr)[-3000:]
+    )
+    calls = Path(env["TLZ_TEST_AWS_LOG"]).read_text()
+    assert "sts assume-role" not in calls and not re.search(r"^(s3|s3api|dynamodb)\b", calls, re.MULTILINE), (
+        "the refused call reached the stand-in aws:\n%s" % calls
+    )

@@ -20,7 +20,19 @@
         "iam:RemoveRoleFromInstanceProfile",
         "iam:DeleteInstanceProfile",
         "iam:TagRole",
-        "iam:UntagRole",
+        "iam:UntagRole"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotLike": {
+          "aws:ResourceTag/ManagedBy": "TLZ"
+        }
+      }
+    },
+    {
+      "Sid": "AllowRolePolicyWritesOnBoundedRoles",
+      "Effect": "Allow",
+      "Action": [
         "iam:PutRolePolicy",
         "iam:DeleteRolePolicy",
         "iam:AttachRolePolicy",
@@ -28,6 +40,9 @@
       ],
       "Resource": "*",
       "Condition": {
+        "ArnLike": {
+          "iam:PermissionsBoundary": "arn:*:iam::*:policy/End-User-Policy"
+        },
         "StringNotLike": {
           "aws:ResourceTag/ManagedBy": "TLZ"
         }
@@ -39,7 +54,7 @@
       "Action": ["iam:CreateRole", "iam:PutRolePermissionsBoundary"],
       "Resource": "*",
       "Condition": {
-        "StringNotEquals": {
+        "ArnNotLike": {
           "iam:PermissionsBoundary": "arn:*:iam::*:policy/End-User-Policy"
         }
       }

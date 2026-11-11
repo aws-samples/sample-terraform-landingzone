@@ -8,7 +8,7 @@ Central network management: VPCs, Subnets, NAT Gateways, Transit Gateway, Route 
 |------|-------------|------|---------|----------|
 | `vpcs` | VPC definitions with subnets, TGW attachment, flow logs. Every level carries an optional `tags` map; subnets additionally carry `route_table_tags` and `nat_gateway_tags` for the resources derived from them — see [Tagging](#tagging). The `tgw_attachment` block optionally carries `dns_support`, `ipv6_support`, `security_group_referencing_support` and an explicit `subnet_names` choice — see [Transit Gateway attachments](#transit-gateway-attachments). Subnets optionally carry placement and addressing switches (`local_zone`, `map_public_ip_on_launch`, `assign_ipv6_on_creation`, `enable_dns64`, `private_dns_options`, `outpost_name` against the VPC's `outposts` list) — see [Subnet options and Outposts](#subnet-options-and-outposts). Routes take an IPv4 CIDR, an IPv6 CIDR or a named prefix list as destination and the next-hop types `igw`, `eigw`, `vgw` and `local_gateway`; `gateway_route_tables` and `enable_route_propagation` cover edge routing and VGW route propagation — see [Route destinations and gateway route tables](#route-destinations-and-gateway-route-tables). Gateway endpoints optionally take per-service options (`gateway_endpoint_options`: policy, full service name); interface endpoints optionally take `service_name`, `security_group`, `central` and `hosted_zone_name` — see [VPC endpoint options](#vpc-endpoint-options). NACL rules name their traffic through an IPv4 CIDR, an IPv6 CIDR or a subnet selector resolved at plan time, and take ICMP type/code pairs — see [Network ACL rule sources](#network-acl-rule-sources). Security group rules combine IPv4/IPv6 CIDRs, subnet selectors, group references (ingress and egress) and prefix lists, and take named port types (`types`); groups take a `description` — see [Security group rule sources and types](#security-group-rule-sources-and-types). Subnet `share_targets` take account names, account IDs, OU or organization ARNs — see [Resource sharing](#resource-sharing). Each entry optionally carries `instance_tenancy`, the explicit `egress_only_igw` switch, further IPv6 ranges (`ipv6_cidrs`) and a `virtual_private_gateway` block with its ASN; subnets carry the NAT gateway details `nat_gateway_name`, `nat_gateway_private`, `nat_gateway_allocation_id` and `nat_gateway_eip_name` — see [VPC base options](#vpc-base-options). The `flow_logs` block additionally takes `destination = "both"`, `cloudwatch_retention_days` and `s3_log_path` — see [Flow log destinations](#flow-log-destinations). Each entry optionally carries `enable_dns_support`, `enable_dns_hostnames` and `use_central_endpoints` — see [VPC DNS and central endpoints](#vpc-dns-and-central-endpoints) | `list(object)` | `[]` | no |
 | `transit_gateway` | TGW configuration (ASN, route tables, peering). `auto_accept_shared_attachments` (default `"enable"`) controls whether attachments from RAM-shared accounts connect without a manual acceptance step — `"disable"` adds that control step but automated spoke onboarding then waits in pendingAcceptance. Optional gateway options (`dns_support`, `vpn_ecmp_support`, `multicast_support`, `security_group_referencing_support`, the default route table switches) and `cidr_blocks`; static routes take a CIDR block or a named prefix list as destination and a VPC, VPN, DX gateway or peering attachment as next hop — see [Transit Gateway options and static routes](#transit-gateway-options-and-static-routes). `tags` applies to the gateway, `route_table_tags` per route table name, `peering[].tags` per peering attachment. `share_targets` take account names, account IDs, OU or organization ARNs — see [Resource sharing](#resource-sharing). A peering entry additionally carries an `accepter` block (`account`, `apply_tags_from_requester`, `tags`), and `peering_accepters` accepts a peering another account or region requested — see [Transit Gateway peering](#transit-gateway-peering) | `object` | `{}` | no |
-| `route53_zones` | Private hosted zones and resolver rules. `cross_account_associations` creates the association authorization and the association with the module's one provider, in the zone owner's account; Route 53 takes the association of another account's VPC only from that account, so an entry whose `account_id` is not the stack's own account is refused at plan | `list(object)` | `[]` | no |
+| `route53_zones` | Private hosted zones and resolver rules. Each zone-scoped rule is associated with the VPCs the zone is attached to: the zone's `vpc_ids` (VPCs of the account the stack runs in) or, with `vpc_ids` empty, every VPC of the module; a check warns when another rule of the module already forwards the same domain in one of those VPCs. `cross_account_associations` creates the association authorization and the association with the module's one provider, in the zone owner's account; Route 53 takes the association of another account's VPC only from that account, so an entry whose `account_id` is not the stack's own account is refused at plan | `list(object)` | `[]` | no |
 | `network_firewall` | Network Firewall configuration. `tags` applies to the firewall, `firewall_policy.tags` to the policy and `rule_groups[].tags` per rule group. Rule groups and the policy optionally carry `share_targets` — see [Resource sharing](#resource-sharing). Further firewalls and policies stand in `firewalls` and `policies`, the policy takes stateful default actions, engine options, rule group references with priorities and custom actions, and a rule group takes a structured `rule_group` instead of the `rules` string — see [Network Firewall policies, firewalls and rule sources](#network-firewall-policies-firewalls-and-rule-sources) | `object` | `{}` | no |
 | `ipam` | IPAM configuration. `tags` applies to the IPAM, `pools[].tags` per pool. Pools optionally carry `share_targets` — see [Resource sharing](#resource-sharing). Pools optionally carry `description`, `address_family`, `additional_cidrs`, `auto_import`, the three allocation netmask lengths, `allocation_resource_tags`, `publicly_advertisable`/`public_ip_source` and a `scope`; `scopes` declares scopes beyond the two the IPAM brings itself — see [IPAM pools and scopes](#ipam-pools-and-scopes) | `object` | `{}` | no |
 | `prefix_lists` | Managed Prefix Lists, each with an optional `tags` map | `list(object)` | `[]` | no |
@@ -302,6 +302,12 @@ Two attributes are not configurable: `enable_deletion_protection` and
 `drop_invalid_header_fields` are always on, see [Deletion
 protection](#deletion-protection).
 
+An application load balancer names at least one group in `security_groups`
+(entries of the same VPC's `security_groups`, with ingress on the listener
+ports and egress to the targets); the plan refuses an entry without one.
+Without a group AWS attaches the VPC's default security group, and this module
+removes every rule of that group, so the load balancer would pass no traffic.
+
 ### Target group attributes
 
 | Attribute | Purpose | Values |
@@ -491,6 +497,7 @@ load_balancers = [
     type                       = "application"
     vpc_name                   = "workload"
     subnet_names               = ["private-a", "private-b"]
+    security_groups            = ["app-alb-sg"]
     scheme                     = "internal"
     idle_timeout               = 120
     desync_mitigation_mode     = "strictest"
@@ -547,11 +554,12 @@ authenticated_edge_allowed_issuers = ["https://idp.example.com"]
 
 load_balancers = [
   {
-    name         = "app-edge-alb"
-    type         = "application"
-    vpc_name     = "workload"
-    subnet_names = ["public-a", "public-b"]
-    scheme       = "internet-facing"
+    name            = "app-edge-alb"
+    type            = "application"
+    vpc_name        = "workload"
+    subnet_names    = ["public-a", "public-b"]
+    security_groups = ["app-edge-sg"]
+    scheme          = "internet-facing"
     listeners = [
       {
         port            = 443
@@ -599,7 +607,7 @@ attachment options and an explicit subnet choice:
 | `dns_support` | `"enable"`, `"disable"`, `null` | DNS resolution across the attachment. `null` leaves the AWS default (enabled) |
 | `ipv6_support` | `"enable"`, `"disable"`, `null` | IPv6 traffic across the attachment. `"enable"` requires `enable_ipv6 = true` on the VPC — the module rejects the mismatch at plan time, AWS only at apply |
 | `security_group_referencing_support` | `"enable"`, `"disable"`, `null` | Security group references across VPC boundaries through the attachment |
-| `subnet_names` | list of subnet names | Exactly these subnets carry the attachment. Empty keeps the module's derivation: one subnet per availability zone whose name contains `tgw` |
+| `subnet_names` | list of subnet names | Exactly these subnets carry the attachment. Empty keeps the module's derivation: one subnet per availability zone whose name contains `tgw`. A VPC with neither is refused at plan time while `transit_gateway.enabled` is true |
 
 Every option defaults to writing nothing, so an attachment that names none of
 them keeps the AWS defaults.
@@ -798,6 +806,12 @@ through that gateway follows the listed routes, for example through a firewall
 endpoint. AWS allows one route table per gateway, and the module rejects a
 second one at plan time.
 
+A route takes an optional `name`, in `custom_routes` and in the routes of a
+gateway route table alike. Without it the route is keyed by its list position,
+so removing or reordering an earlier route rewrites the routes after it; with
+it the key stays put — see [Stable keys for rules and
+routes](#stable-keys-for-rules-and-routes).
+
 `enable_route_propagation` on a subnet propagates the routes of the VPC's
 virtual private gateway into that subnet's route table. Everything that leans
 on the virtual private gateway (routes of type `vgw`, tables of type
@@ -878,7 +892,9 @@ vpcs = [{
 ## DNS firewall associations
 
 A DNS firewall rule group associates with every VPC named in its `vpc_names`;
-the association priority follows the list position. `mutation_protection`
+the association priority is 100 plus the VPC's position in that list, and each
+earlier rule group on the same VPC adds 100, so two groups on one VPC never
+share a priority and the earlier group is evaluated first. `mutation_protection`
 optionally locks single associations against modification and removal: a map
 keyed by an entry of `vpc_names` whose value `ENABLED` or `DISABLED` reaches
 exactly that association. A VPC without an entry keeps the service default
@@ -1011,6 +1027,34 @@ security_groups = [
     source_security_group = "app-sg", description = "PostgreSQL from the application tier" }] },
 ]
 ```
+
+### Stable keys for rules and routes
+
+A security group rule (`ingress`/`egress`) and a route (`custom_routes`,
+gateway route table `routes`) are keyed by their list position unless they
+carry the optional `name`. With position keys, removing or reordering an
+entry moves every later entry to a new key: Terraform replaces those rules or
+routes, and because AWS refuses a duplicate rule or route while the old one
+still exists, such an apply can fail half way and leave a rule missing until
+the next apply. A `name` (a letter first, then letters, digits, `-` or `_`;
+unique within its list) keys the entry by name instead. Entries without a name
+keep their position key, so an existing configuration plans unchanged.
+
+Naming an entry that already exists changes its key once. Move it in the state
+before that apply, so Terraform keeps the rule instead of replacing it (under
+Terragrunt, `terragrunt state mv` in the stack's directory):
+
+```bash
+terraform state mv \
+  'aws_security_group_rule.ingress_cidr["hub.app-sg.ingress.0"]' \
+  'aws_security_group_rule.ingress_cidr["hub.app-sg.ingress.https"]'
+```
+
+The rule resources are `ingress_cidr`, `ingress_sg`, `ingress_prefix_list`
+and their `egress_` counterparts; a rule with `types` carries a `.<type>`
+suffix after the name or position. Routes are `aws_route.custom["<vpc>.<subnet>.<name>"]`
+and `aws_route.gateway_custom["<vpc>.<table>.<name>"]`. A plan after the move
+shows no replacement.
 
 ## Resource sharing
 
@@ -1232,7 +1276,10 @@ carries a prefix between /44 and /60, the sizes AWS associates with a VPC.
 
 `nat_gateway = true` on a subnet keeps its meaning: the module creates the
 gateway, allocates an address for it and routes the VPC's private subnets to
-it. The four details change what that gateway is:
+it. With several public NAT gateways in one VPC, a private subnet routes
+through the first one in its own zone (Availability Zone or Local Zone), and
+through the VPC's first one when its zone has none. The four details change
+what that gateway is:
 
 | Detail | Purpose |
 |---|---|
@@ -1790,8 +1837,9 @@ module "networking" {
         { name = "public-a",  cidr = "10.0.1.0/24",  availability_zone = "eu-central-1a", type = "public", nat_gateway = true },
         { name = "private-a", cidr = "10.0.10.0/24", availability_zone = "eu-central-1a", type = "private" },
         { name = "isolated-a", cidr = "10.0.20.0/24", availability_zone = "eu-central-1a", type = "isolated" },
+        { name = "tgw-a", cidr = "10.0.30.0/28", availability_zone = "eu-central-1a", type = "isolated" },
       ]
-      tgw_attachment = { route_table_name = "shared" }
+      tgw_attachment = { route_table_name = "shared" } # attaches through tgw-a
       flow_logs      = { destination = "s3" }
     },
   ]

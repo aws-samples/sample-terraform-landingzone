@@ -173,3 +173,47 @@ def test_regression_quarantine_release_detaches_nothing():
     module = "\n".join(p.read_text() for p in ORG.glob("*.tf"))
     assert "tlz-quarantine-auto-detach" not in module
     assert 'resource "aws_lambda_function"' not in (ORG / "quarantine.tf").read_text()
+
+
+def detach_event(policy_id, caller_arn):
+    return {
+        "detail": {
+            "eventName": "DetachPolicy",
+            "requestParameters": {"policyId": policy_id, "targetId": "ou-a"},
+            "userIdentity": {"sessionContext": {"sessionIssuer": {"arn": caller_arn}}},
+        }
+    }
+
+
+OPERATOR = "arn:aws:iam::123456789012:role/aws-reserved/sso.amazonaws.com/eu-central-1/AWSReservedSSO_Admin_abc123"
+
+
+@pytest.mark.parametrize("policy_id", ["p-foreign", "p-quarantine"])
+def test_regression_detach_of_unmanaged_or_quarantine_policy_is_not_reverted(revert, monkeypatch, policy_id):
+    # regression: a DetachPolicy was undone for any policy id, so the manual
+    # release of the quarantine SCP and detaches of policies the module does not
+    # manage were re-attached at once.
+    monkeypatch.setenv("SCP_REVERT_QUARANTINE_POLICY_IDS", json.dumps(["p-quarantine"]))
+    (Path(revert[1].__file__).parent / "known_good_policies.json").write_text(
+        json.dumps({"p-managed": SCP, "p-quarantine": SCP}))
+    stub, handler = revert
+    result = handler.lambda_handler(detach_event(policy_id, OPERATOR), None)
+    assert stub.calls == []
+    assert result["statusCode"] == 409
+
+
+def test_regression_detach_of_managed_policy_is_reverted(revert):
+    stub, handler = revert
+    result = handler.lambda_handler(detach_event("p-managed", OPERATOR), None)
+    assert stub.calls == [("attach", "p-managed", "ou-a")]
+    assert result["statusCode"] == 200
+
+
+def test_regression_exempt_principal_arn_skips_revert(revert, monkeypatch):
+    # regression: on the default path every apply runs as the operator's own
+    # principal, which no exemption could name, so the function undid it.
+    monkeypatch.setenv("SCP_REVERT_EXEMPT_ARNS", json.dumps([OPERATOR]))
+    stub, handler = revert
+    result = handler.lambda_handler(detach_event("p-managed", OPERATOR), None)
+    assert stub.calls == []
+    assert result["body"].startswith("Skipped")

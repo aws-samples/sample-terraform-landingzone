@@ -239,13 +239,18 @@ resource "aws_s3_bucket_lifecycle_configuration" "central_logs" {
 }
 
 # --- S3 Access Logging ---
-# When enable_separate_access_logs_bucket is true, logs go to the dedicated bucket.
-# Otherwise, logs go to a prefix in the central log bucket itself.
+# Only into the separate access logs bucket. The central bucket cannot log
+# into itself: its policy has no grant for the logging service, its SSE-KMS
+# default encryption is not a supported target, and a bucket that logs into
+# itself writes logs about its own logs. Without the separate bucket, object
+# access to the central bucket is recorded by the S3 data events of the
+# organization trail (cloudtrail_s3_data_events).
 
 resource "aws_s3_bucket_logging" "central_logs" {
+  count  = var.enable_separate_access_logs_bucket ? 1 : 0
   bucket = aws_s3_bucket.central_logs.id
 
-  target_bucket = var.enable_separate_access_logs_bucket ? aws_s3_bucket.access_logs[0].id : aws_s3_bucket.central_logs.id
+  target_bucket = aws_s3_bucket.access_logs[0].id
   target_prefix = "s3-access-logs/"
 }
 
@@ -274,6 +279,10 @@ locals {
     account_id              = local.account_id
     organization_id         = var.organization_id
     guardduty_export_prefix = local.guardduty_export_policy_prefix
+    # The GuardDuty and Macie grants admit every account whose export writes
+    # here (main.tf, export_source_accounts): a string for one account, a JSON
+    # array for more.
+    export_source_accounts_json = local.export_source_accounts_json
     # The CloudTrail grants are scoped to the organization trail by
     # aws:SourceArn; CreateTrail validates them synchronously, so the name in
     # the policy must be the name of the trail — a renamed trail without this
