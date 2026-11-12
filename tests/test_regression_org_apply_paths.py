@@ -342,3 +342,33 @@ def test_regression_finding_consumers_follow_the_switch(tmp_path):
     }
     assert {k: org[k] for k in empty} == empty, "with the switch off every consumer input of audit/security-org-config must be empty"
     assert _render(root, "stacks/audit/monitoring", env)["exclude"]["if"] is True, "audit/monitoring must be excluded with the switch off"
+
+
+def test_regression_management_account_is_a_member_without_accounts_hcl(tmp_path):
+    """The guide leaves management_account_id empty; the member list reads the organization unit."""
+    root, env, _ = _stage(tmp_path)
+    for toggle in ("enable_logging", "enable_security"):
+        _switch_on(root, toggle)
+    accounts = root / "env/accounts.hcl"
+    _rewrite(accounts, 'audit_account_id       = ""', 'audit_account_id       = "%s"' % PLACEHOLDER_ID)
+    org_unit = root / "stacks/audit/security-org-config/terragrunt.hcl"
+    # The organization unit's output after its apply, in place of the empty first-plan mock.
+    _rewrite(org_unit, 'master_account_id = ""', 'master_account_id = "123456789012"')
+    _rewrite(org_unit, "active_account_ids = {}", 'active_account_ids = { Audit = "%s", Workload = "444455556666" }' % PLACEHOLDER_ID)
+
+    org = _render(root, "stacks/audit/security-org-config", env)["inputs"]
+    assert sorted(org["security_hub_member_account_ids"]) == ["123456789012", "444455556666"], (
+        "with env/accounts.hcl as the guide leaves it, the member list must carry the management account "
+        "from the organization unit and never the Audit account: %r" % org["security_hub_member_account_ids"]
+    )
+
+    # Without the organization unit nothing supplies the id. A configuration that planned
+    # before still renders: the dependency is off, the management account is not enrolled,
+    # and env/accounts.hcl fills it.
+    _rewrite(root / "env/common.hcl", "enable_organization            = true", "enable_organization            = false")
+    rendered = _render(root, "stacks/audit/security-org-config", env)
+    assert rendered["exclude"]["if"] is False, "the unit must still run with the organization unit excluded"
+    assert rendered["inputs"]["security_hub_member_account_ids"] == ["444455556666"], rendered["inputs"]["security_hub_member_account_ids"]
+    _rewrite(accounts, 'management_account_id  = ""', 'management_account_id  = "123456789012"')
+    org = _render(root, "stacks/audit/security-org-config", env)["inputs"]
+    assert sorted(org["security_hub_member_account_ids"]) == ["123456789012", "444455556666"], org["security_hub_member_account_ids"]

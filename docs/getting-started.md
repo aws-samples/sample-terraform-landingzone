@@ -102,7 +102,7 @@ locals {
 }
 ```
 
-Leave `env/accounts.hcl` empty for now — the cross-account stacks resolve their account IDs through Terragrunt dependencies and SSM parameters.
+Leave `env/accounts.hcl` empty for now — the cross-account stacks resolve their account IDs through Terragrunt dependencies and SSM parameters. One exception: with `enable_organization = false`, set `management_account_id`; nothing else supplies it to `audit/security-org-config`, which otherwise enrols no management account.
 
 `stacks/management/config-rules` evaluates member accounts once the Audit account ID resolves, the same way the recorder stacks resolve it: `audit_account_id` in `env/accounts.hcl` when set, otherwise the SSM parameter `/tlz/accounts/Audit/id` that Pass 1 writes (or `enable_config_recorder_members = true`). Before the Audit account exists it excludes every member account from every organization Config rule and conformance pack. Conformance packs are organization packs: they reach the same member accounts as the rules.
 
@@ -394,11 +394,13 @@ per-account units do not reach it; the organization-level services do.
    [Operations — Migrating local state out of the repository](operations.md#migrating-local-state-out-of-the-repository),
    the destination being `s3://<new bucket>` reached through `aws sts assume-role`
    into the access role of step 4. Then `(cd stacks && terragrunt run --all -- plan)`
-   must show the SSM parameters `/tlz/accounts/*` moving from the management to
-   the deployment account and nothing else.
+   must show three changes and nothing else: the SSM parameters `/tlz/accounts/*`
+   moving from the management to the deployment account, the Pipeline SCP
+   (`management/organization`, from `pipeline_scp_infrastructure_ou_id` of step 3)
+   and `TLZDeploymentRole` in the management account (`management/deployment-role`).
 8. Pipeline: set `enable_pipeline = true`, `pipeline_type` and the source keys,
-   then `(cd stacks && terragrunt run --all -- apply)` creates `TLZDeploymentRole`
-   in the management account and the pipeline in the deployment account. Commit
+   then `(cd stacks && terragrunt run --all -- apply)` creates the pipeline in
+   the deployment account. Commit
    `env/common.hcl` and `env/accounts.hcl` to the repository the pipeline builds
    (`git add -f` once; this repository's `.gitignore` keeps them out here) and
    push. The first run's Plan stage is the proof that the deployment role's

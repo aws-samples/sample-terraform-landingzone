@@ -95,7 +95,7 @@ def test_regression_suspended_account_leaves_every_deployment_target(tmp_path):
     root, env = _stage_with_memberships(tmp_path)
     common = root / "env/common.hcl"
     ou_units = _ou_deployment_units(root)
-    sidecar_units = _sidecar_units(root, "workload-dev") + ["stacks/audit/config-recorder"]
+    sidecar_units = _sidecar_units(root, "workload-dev") + ["stacks/audit/config-recorder", "stacks/audit/monitoring"]
     # The networking unit arrived with its own copy of the sidecar; the glob
     # must see it, so a drift between the copies is caught below by name.
     assert "stacks/workload-dev/networking" in sidecar_units, sidecar_units

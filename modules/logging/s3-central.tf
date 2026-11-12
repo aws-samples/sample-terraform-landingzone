@@ -254,6 +254,14 @@ resource "aws_s3_bucket_logging" "central_logs" {
   target_prefix = "s3-access-logs/"
 }
 
+# Earlier releases created this resource without count. With the separate
+# access logs bucket the existing logging configuration moves to [0] in place;
+# without it, the self-logging configuration is removed.
+moved {
+  from = aws_s3_bucket_logging.central_logs
+  to   = aws_s3_bucket_logging.central_logs[0]
+}
+
 # --- S3 Bucket Policy for CloudTrail and Config Delivery ---
 
 locals {

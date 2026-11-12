@@ -6,6 +6,9 @@
 #   cd stacks/management/accounts && terragrunt output account_ids
 
 locals {
+  # Empty: the stacks read it from the organization unit. Required when
+  # enable_organization = false and the finding consumers run in the Audit
+  # account (without it audit/security-org-config enrols no management account).
   management_account_id  = ""
   audit_account_id       = ""
   log_archive_account_id = ""

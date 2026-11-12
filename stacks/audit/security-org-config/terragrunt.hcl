@@ -37,6 +37,15 @@ locals {
   # account resolves. Same expression as in stacks/management/security, which
   # creates its own consumers exactly when this is false.
   consumers_in_audit = try(local.common.locals.security_finding_consumers_in_audit, true) && local.account_id != ""
+
+  # The management account becomes a Security Hub member of this administrator.
+  # Its id comes from env/accounts.hcl when set there, otherwise from the
+  # organization unit while it is included. With enable_organization = false
+  # and the key empty nothing supplies it: the management account is not
+  # enrolled (check security_hub_members_enrolled of the module warns when no
+  # member is left at all).
+  management_account_id_override = try(local.accounts.locals.management_account_id, "")
+  read_organization              = local.consumers_in_audit && local.management_account_id_override == "" && local.common.locals.enable_organization
 }
 
 # Skip execution when the audit account ID is not available, and while
@@ -84,6 +93,20 @@ dependency "accounts" {
   mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
 }
 
+# The management account id, read only while env/accounts.hcl leaves it empty.
+# The accounts unit already depends on the organization unit, so the run
+# order stays the same. Before its first apply the mock enrols no management
+# account.
+dependency "organization" {
+  config_path = "../../management/organization"
+  enabled     = local.read_organization
+
+  mock_outputs = {
+    master_account_id = ""
+  }
+  mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
+}
+
 inputs = {
   # Service toggles — derived from management/security outputs
   enable_guardduty    = dependency.security.outputs.guardduty_detector_id != ""
@@ -123,12 +146,15 @@ inputs = {
 
   # Every active account and the management account become Security Hub
   # members of this administrator; the Audit account itself never does (the
-  # module refuses it). The management account id comes from env/accounts.hcl;
-  # empty there, it is not enrolled.
+  # module refuses it). The management account id comes from env/accounts.hcl,
+  # or from the organization unit while that file leaves it empty (see locals).
   security_hub_member_account_ids = local.consumers_in_audit ? [
     for id in concat(
       values(dependency.accounts.outputs.active_account_ids),
-      compact([try(local.accounts.locals.management_account_id, "")]),
+      compact([
+        local.management_account_id_override != "" ? local.management_account_id_override
+        : local.read_organization ? dependency.organization.outputs.master_account_id : ""
+      ]),
     ) : id if id != local.account_id
   ] : []
 }

@@ -18,11 +18,11 @@ Before the FIRST org-wide apply against accounts that an earlier deployment alre
 
 ## Enabling/Disabling Modules
 
-Toggle in `env/common.hcl`, then apply. Disabled modules are skipped. Dependent modules are also skipped.
+Toggle in `env/common.hcl`, then apply. Disabled modules are skipped. Units that read a disabled module's outputs are skipped only in the cases named below.
 
 ### Switching a module off
 
-A switched-off module is skipped by every `run --all` command, `destroy` included: its resources stay in AWS and are no longer managed. The units that read its outputs are skipped with it, for example the config recorders while `enable_logging` is false and `audit/security-org-config` while `enable_security` is false. To remove the resources, destroy each unit directly while its toggle is still on, dependents first, then set the toggle to false:
+A switched-off module is skipped by every `run --all` command, `destroy` included: its resources stay in AWS and are no longer managed. Two kinds of units that read its outputs are skipped with it: the config recorders while `enable_logging` is false, and `audit/security-org-config` while `enable_security` is false. The other units that read `management/logging` are not skipped: `management/networking`, `management/security`, `management/monitoring`, `management/config-rules`, `management/config-recorder-members`, `workload-dev/networking` and `audit/security-org-config`. With `enable_logging = false` and no applied logging unit, their apply stops with "detected no outputs". To remove the resources, destroy each unit directly while its toggle is still on, dependents first, then set the toggle to false:
 
 ```bash
 (cd stacks/audit/security-org-config && terragrunt destroy)
@@ -344,11 +344,17 @@ policy (a single-element list read back as a string), not caused by the move.
 # Local backend (run --all skips both bootstrap units in this mode)
 (cd stacks && terragrunt run --all -- destroy)
 
-# S3 backend: the bootstrap units hold the state bucket and lock table of
-# every other unit, so exclude them and destroy them last, management last
-(cd stacks && terragrunt run --all --filter '!./management/bootstrap' --filter '!./deployment/bootstrap' -- destroy)
-(cd stacks/deployment/bootstrap && terragrunt destroy)   # only with enable_deployment_account = true
+# S3 backend: the bootstrap unit holds the state bucket and lock table of
+# every other unit, so exclude it and destroy it last. Which unit that is
+# follows enable_deployment_account; the other one refuses a direct call.
+
+# enable_deployment_account = false
+(cd stacks && terragrunt run --all --filter '!./management/bootstrap' -- destroy)
 (cd stacks/management/bootstrap && terragrunt destroy)
+
+# enable_deployment_account = true
+(cd stacks && terragrunt run --all --filter '!./deployment/bootstrap' -- destroy)
+(cd stacks/deployment/bootstrap && terragrunt destroy)
 ```
 
 See [Getting Started — Destroy](getting-started.md#destroy) for the order and
@@ -653,7 +659,7 @@ The GuardDuty findings export, the Macie classification export, the Security Hub
 
 - `management/logging`: in-place updates of the central bucket policy (the GuardDuty and Macie grants gain the Audit account) and of the bucket key policy (the Macie statement). No replacement.
 - `management/security`: destroys `aws_guardduty_publishing_destination.this[0]`, `time_sleep.guardduty_export_wait[0]`, `aws_securityhub_finding_aggregator.this[0]`, every `aws_securityhub_automation_rule.this[...]` and, where it existed, `aws_macie2_classification_export_configuration.this[0]`. Nothing else changes: detector, Security Hub account, standards, disabled controls and the export lifecycle rule stay.
-- `audit/security-org-config`: additions only — destination and wait, aggregator, rules, one `aws_securityhub_member` per existing account and for the management account, the disabled controls of the Audit account, the Macie export when enabled. The detector's `finding_publishing_frequency` shows no diff at the default.
+- `audit/security-org-config`: additions only — destination and wait, aggregator, rules, one `aws_securityhub_member` per existing account and for the management account, the disabled controls of the Audit account, the Macie export when enabled. The detector's `finding_publishing_frequency` shows no diff at the default. The management account id comes from `management_account_id` in `env/accounts.hcl` when set, otherwise from the organization unit; with `enable_organization = false` the key is required, or the management account is not enrolled.
 - `audit/monitoring`: additions only — SNS key and topics, subscriptions, the GuardDuty and Security Hub rules, the findings log group, the dashboard `TLZ-Audit-Findings`.
 
 The run order follows the dependencies: logging, security, security-org-config, monitoring. No `moved` block and no import: the resources change account, which no state move can express, and every destroyed object is a configuration, not data. The findings already exported stay where they are — same bucket, same prefixes `guardduty/AWSLogs/<account>/GuardDuty/<region>/...` and `macie/classification-results/` — and the Audit export continues under the same prefix; the lifecycle rules of the prefix are unchanged.
@@ -664,7 +670,7 @@ Every email address in `sns_email_targets` receives a second subscription confir
 
 To keep today's layout, set `security_finding_consumers_in_audit = false` in `env/common.hcl` **before** upgrading: no unit then plans a change (the management security unit reports the export beside a designated administrator as a warning, by design). Rollback after the move: set the key to `false` and apply — the Audit resources are destroyed and the management ones re-created in the same run; the bucket and key grants for the Audit account stay until its id leaves `finding_export_source_account_ids`, which is harmless.
 
-What only a real organization shows: that the Audit destination reaches `PUBLISHING` with the management bucket and key (probe GD-01 after the move), that every active account and the management account appear as GuardDuty and Security Hub members of the Audit administrator (probe DA-01), and that a member's Security Hub finding fires the Audit rule. `make livetest-probes` runs GD-01 and DA-01.
+What only a real organization shows: that the Audit destination reaches `PUBLISHING` with the management bucket and key after the move, that every active account and the management account appear as GuardDuty and Security Hub members of the Audit administrator, and that a member's Security Hub finding fires the Audit rule. Check these with a live check of your own after the first apply.
 
 ## Migrating to the New TLS Listener Floor
 

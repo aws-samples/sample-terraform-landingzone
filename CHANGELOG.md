@@ -3,6 +3,27 @@
 This file lists what changed in the published repository, one section per version, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.31] - 2026-11-12
+
+### Fixed
+
+- Logging: with `enable_separate_access_logs_bucket = true`, the first plan after 0.5.30 moves the
+  central bucket's access logging configuration in place to its new address; before, it destroyed
+  and created it, which could leave access logging off. With the default `false`, the plan removes
+  the bucket's logging into itself, as intended.
+- Stack `audit/security-org-config` enrols the management account as a Security Hub member of the
+  Audit account: with `env/accounts.hcl` left empty, it reads the management account id from the
+  organization unit. With `enable_organization = false`, set `management_account_id` in
+  `env/accounts.hcl`, or the management account is not enrolled; the plan warns only when the
+  member list is empty.
+- Stack `audit/monitoring` skips a suspended Audit account: with the Audit account declared in an OU
+  marked `ignore = true`, the unit no longer looks up the account or assumes its role.
+- `docs/operations.md`: the Destroy block shows one sequence per `enable_deployment_account` value,
+  so every line runs in its mode, and the section on switched-off modules lists the units that read
+  the logging stack and stop with "detected no outputs" while it was never applied.
+- `docs/getting-started.md`: step 7 of "Deployment account mode" names every expected plan change,
+  the SSM parameter move, the Pipeline SCP and `TLZDeploymentRole`; step 8 creates the pipeline only.
+
 ## [0.5.30] - 2026-11-11
 
 ### Added
@@ -88,7 +109,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   access logs bucket uses SSE-S3; the log bucket key admits the Macie export and CloudTrail Lake
   event data stores; the ELB log bucket admits load balancers of the organization only; an
   auto-created replica gets Object Lock when the central bucket has it. All of these change in
-  place, nothing is replaced.
+  place, nothing is replaced, except the central bucket's self-logging: with the default it is
+  removed, and with the separate access logs bucket it moves in place.
 - Networking: zone-scoped resolver rules take effect, each rule associated with the zone's VPCs;
   private subnets use the NAT gateway in their own zone; a second DNS firewall rule group on a VPC
   gets its own priority.
